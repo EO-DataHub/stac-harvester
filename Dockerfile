@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update -y && apt-get upgrade -y
 
 WORKDIR /stac_harvester
-ADD LICENSE.txt requirements.txt ./
+ADD LICENSE requirements.txt ./
 ADD stac_harvester ./stac_harvester/
 ADD pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip pip3 install -r requirements.txt .
