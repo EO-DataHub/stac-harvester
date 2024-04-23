@@ -185,9 +185,12 @@ def main():
         "target": f"/user-datasets/{args.workspace_name}/{args.sub_catalog}/",
     }
 
-    # Send Pulsar message containing harvested links
-    send_pulsar_message(output_data)
-    logging.info(f"Sent harvested message {output_data}")
+    if any([added_keys, updated_keys, deleted_keys]):
+        # Send Pulsar message containing harvested links
+        send_pulsar_message(output_data)
+        logging.info(f"Sent harvested message {output_data}")
+    else:
+        logging.info("No changes made to previously harvested state")
 
     # Record harvested hash data in S3
     upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key)
