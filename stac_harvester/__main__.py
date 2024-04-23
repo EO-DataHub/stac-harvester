@@ -138,8 +138,8 @@ def send_pulsar_message(json_data: dict):
 def main():
     """"""
     args = parser.parse_args()
-    added_keys = []
-    updated_keys = []
+    added_urls = []
+    updated_urls = []
     url_list = [args.source_url]
     parsed_url_list = []
     logging.info(f"Harvesting from source URL: {args.source_url}")
@@ -160,11 +160,11 @@ def main():
         if not previous_hash:
             # URL was not harvested previously
             logging.info("Appended URL to 'added' list")
-            added_keys.append(url)
+            added_urls.append(url)
         elif previous_hash != file_hash:
             # URL has changed since last run
             logging.info("Appended URL to 'updated' list")
-            updated_keys.append(url)
+            updated_urls.append(url)
         latest_harvested[url] = file_hash
         parsed_url_list.append(url)
 
@@ -172,20 +172,20 @@ def main():
         new_urls = find_urls(file_contents, args.source_url, url_list, parsed_url_list)
         url_list += new_urls
 
-    deleted_keys = list(previously_harvested.keys())
-    logging.info(f"Previously harvested URLs not found: {deleted_keys}")
+    deleted_urls = list(previously_harvested.keys())
+    logging.info(f"Previously harvested URLs not found: {deleted_urls}")
 
     output_data = {
         "id": f"{args.workspace_name}/{args.source_url}",
         "workspace": args.workspace_name,
-        "added_keys": added_keys,
-        "updated_keys": updated_keys,
-        "deleted_keys": deleted_keys,
+        "added_urls": added_urls,
+        "updated_urls": updated_urls,
+        "deleted_urls": deleted_urls,
         "source": args.source_url,
         "target": f"/user-datasets/{args.workspace_name}/{args.sub_catalog}/",
     }
 
-    if any([added_keys, updated_keys, deleted_keys]):
+    if any([added_urls, updated_urls, deleted_urls]):
         # Send Pulsar message containing harvested links
         send_pulsar_message(output_data)
         logging.info(f"Sent harvested message {output_data}")
