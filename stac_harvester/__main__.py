@@ -178,6 +178,7 @@ def main():
     output_data = {
         "id": f"{args.workspace_name}/{args.source_url}",
         "workspace": args.workspace_name,
+        "bucket_name": args.metadata_s3_bucket,
         "added_urls": added_urls,
         "updated_urls": updated_urls,
         "deleted_urls": deleted_urls,
