@@ -136,7 +136,9 @@ def send_pulsar_message(json_data: dict):
 
 
 def main():
-    """"""
+    """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
+    containing all added, updated, and deleted links since the last time the catalog was
+    harvested"""
     args = parser.parse_args()
     added_urls = []
     updated_urls = []
