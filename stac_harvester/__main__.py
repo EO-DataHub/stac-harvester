@@ -179,9 +179,9 @@ def main():
         "id": f"{args.workspace_name}/{args.source_url}",
         "workspace": args.workspace_name,
         "bucket_name": args.metadata_s3_bucket,
-        "added_urls": added_urls,
-        "updated_urls": updated_urls,
-        "deleted_urls": deleted_urls,
+        "added_keys": added_urls,
+        "updated_keys": updated_urls,
+        "deleted_keys": deleted_urls,
         "source": args.source_url,
         "target": f"/user-datasets/{args.workspace_name}/{args.sub_catalog}/",
     }
