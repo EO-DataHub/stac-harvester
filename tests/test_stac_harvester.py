@@ -61,17 +61,16 @@ def test_main(parameters, mocker: MockerFixture):
             parameters["bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_contents", return_value=("test", "hash"))
-        pulsar_message_mock = mocker.patch(
-            "stac_harvester.__main__.send_pulsar_message", return_value=None
-        )
+        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.Client.create_producer")
         stac_harvester.main()
 
         # Verify output. URL is new and therefore in the "added" list
         s3_files = list(s3_resource.Bucket(parameters["bucket_name"]).objects.all())
-        pulsar_message = pulsar_message_mock.call_args.args[0]
-        assert pulsar_message["added_keys"] == [parameters["url"]]
-        assert pulsar_message["updated_keys"] == []
-        assert pulsar_message["deleted_keys"] == []
+        pulsar_message = pulsar_producer_mock.mock_calls[-1].args[0]
+        pulsar_json = json.loads(pulsar_message.decode("utf-8"))
+        assert pulsar_json["added_keys"] == [parameters["url"]]
+        assert pulsar_json["updated_keys"] == []
+        assert pulsar_json["deleted_keys"] == []
         assert len(s3_files) == 1
 
 
@@ -108,15 +107,14 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
             parameters["bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_contents", return_value=("test", "newhash"))
-        pulsar_message_mock = mocker.patch(
-            "stac_harvester.__main__.send_pulsar_message", return_value=None
-        )
+        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.Client.create_producer")
         stac_harvester.main()
 
         # Verify output. URL already existed but the hash is different. URL is in the "updated" list
         s3_files = list(s3_resource.Bucket(parameters["bucket_name"]).objects.all())
-        pulsar_message = pulsar_message_mock.call_args.args[0]
-        assert pulsar_message["added_keys"] == []
-        assert pulsar_message["updated_keys"] == [parameters["url"]]
-        assert pulsar_message["deleted_keys"] == []
+        pulsar_message = pulsar_producer_mock.mock_calls[-1].args[0]
+        pulsar_json = json.loads(pulsar_message.decode("utf-8"))
+        assert pulsar_json["added_keys"] == []
+        assert pulsar_json["updated_keys"] == [parameters["url"]]
+        assert pulsar_json["deleted_keys"] == []
         assert len(s3_files) == 1

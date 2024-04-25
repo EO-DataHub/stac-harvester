@@ -19,6 +19,7 @@ parser.add_argument("sub_catalog", help="Name of the STAC sub catalog", type=str
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
 pulsar_url = os.environ.get("PULSAR_URL")
+pulsar_client = Client(pulsar_url)
 
 if os.getenv("AWS_ACCESS_KEY") and os.getenv("AWS_SECRET_ACCESS_KEY"):
     session = boto3.session.Session(
@@ -128,13 +129,6 @@ def is_valid_url(url: str, source_url: str) -> bool:
     return False
 
 
-def send_pulsar_message(json_data: dict):
-    """Send given json_data to the harvested pulsar topic"""
-    client = Client(pulsar_url)
-    producer = client.create_producer(topic="harvested", producer_name="stac_harvester")
-    producer.send((json.dumps(json_data)).encode("utf-8"))
-
-
 def main():
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
@@ -144,6 +138,7 @@ def main():
     updated_urls = []
     url_list = [args.source_url]
     parsed_url_list = []
+    producer = pulsar_client.create_producer(topic="harvested", producer_name="stac_harvester")
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
@@ -190,7 +185,7 @@ def main():
 
     if any([added_urls, updated_urls, deleted_urls]):
         # Send Pulsar message containing harvested links
-        send_pulsar_message(output_data)
+        producer.send((json.dumps(output_data)).encode("utf-8"))
         logging.info(f"Sent harvested message {output_data}")
     else:
         logging.info("No changes made to previously harvested state")
