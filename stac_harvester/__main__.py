@@ -267,7 +267,7 @@ def main():
                 )
                 logging.info(f"Harvested files: {latest_harvested}")
 
-            except Exception as e:
+            except Exception:
                 logging.error(f"Encountered error for repository {source_url}")
                 raise
 
