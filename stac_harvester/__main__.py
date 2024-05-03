@@ -266,6 +266,7 @@ def main():
                     json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key
                 )
                 logging.info(f"Harvested files: {latest_harvested}")
+                logging.info(output_data)
 
             except Exception:
                 logging.error(f"Encountered error for repository {source_url}")
