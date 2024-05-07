@@ -237,7 +237,7 @@ def main():
                     parsed_url_list.append(url)
 
                     # Add all valid child links to the URL stack
-                    new_urls = find_urls(file_contents, args.source_url, url_list, parsed_url_list)
+                    new_urls = find_urls(file_contents, source_url, url_list, parsed_url_list)
                     url_list += new_urls
 
                 deleted_urls = list(previously_harvested.keys())
