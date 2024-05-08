@@ -132,7 +132,7 @@ def find_urls(
             and check_add_url(href, source_url, urls_to_parse, parsed_urls)
         ):
             if href.endswith("items") or href.endswith("items/"):
-                href = href + f"?limit={limit}"
+                href = href.rstrip("/") + f"?limit={limit}"
             new_urls.append(href)
     logging.info(f"Found child URLs: {new_urls}")
     return new_urls
