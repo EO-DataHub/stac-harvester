@@ -102,7 +102,11 @@ def get_metadata(bucket: str, key: str) -> dict:
 
 
 def find_urls(
-    file_contents: str, source_url: str, urls_to_parse: List[str], parsed_urls: List[str]
+    file_contents: str,
+    source_url: str,
+    urls_to_parse: List[str],
+    parsed_urls: List[str],
+    limit: int,
 ) -> List[str]:
     """Returns all links to URLs that are children of the given file_contents"""
     links = []
@@ -127,6 +131,8 @@ def find_urls(
             and link.get("rel") in {"child", "items", "self"}
             and check_add_url(href, source_url, urls_to_parse, parsed_urls)
         ):
+            if href.endswith("items") or href.endswith("items/"):
+                href = href + f"?limit={limit}"
             new_urls.append(href)
     logging.info(f"Found child URLs: {new_urls}")
     return new_urls
@@ -150,8 +156,6 @@ def is_valid_url(url: str, source_url: str) -> bool:
 
 def get_scan_parser():
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--app-id-from", default="app-id")
-    # parser.add_argument("--app-private-key-from", default="private_key")
     parser.add_argument("--branch", default="main")
     parser.add_argument("--pull", default=True)
     parser.add_argument("--config-scan", default=True)
@@ -204,6 +208,7 @@ def main():
 
             source_url = repo["url"]
             path = repo["path"]
+            limit = repo.get("limit", 10)
 
             try:
                 added_urls = []
@@ -237,7 +242,9 @@ def main():
                     parsed_url_list.append(url)
 
                     # Add all valid child links to the URL stack
-                    new_urls = find_urls(file_contents, source_url, url_list, parsed_url_list)
+                    new_urls = find_urls(
+                        file_contents, source_url, url_list, parsed_url_list, limit
+                    )
                     url_list += new_urls
 
                 deleted_urls = list(previously_harvested.keys())
