@@ -17,6 +17,7 @@ parser.add_argument("source_url", help="URL of STAC catalog or collection to har
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
 parser.add_argument("sub_catalog", help="Name of the STAC sub catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
+parser.add_argument("limit", help="Number of entries to return", type=str, default="10")
 
 pulsar_url = os.environ.get("PULSAR_URL")
 pulsar_client = Client(pulsar_url)
@@ -83,7 +84,11 @@ def get_metadata(bucket: str, key: str) -> dict:
 
 
 def find_urls(
-    file_contents: str, source_url: str, urls_to_parse: List[str], parsed_urls: List[str]
+    file_contents: str,
+    source_url: str,
+    urls_to_parse: List[str],
+    parsed_urls: List[str],
+    limit: int,
 ) -> List[str]:
     """Returns all links to URLs that are children of the given file_contents"""
     links = []
@@ -108,6 +113,8 @@ def find_urls(
             and link.get("rel") in {"child", "items", "self"}
             and check_add_url(href, source_url, urls_to_parse, parsed_urls)
         ):
+            if href.endswith("items") or href.endswith("items/"):
+                href = href.rstrip("/") + f"?limit={limit}"
             new_urls.append(href)
     logging.info(f"Found child URLs: {new_urls}")
     return new_urls
@@ -166,7 +173,9 @@ def main():
         parsed_url_list.append(url)
 
         # Add all valid child links to the URL stack
-        new_urls = find_urls(file_contents, args.source_url, url_list, parsed_url_list)
+        new_urls = find_urls(
+            file_contents, args.source_url, url_list, parsed_url_list, args.limit
+        )
         url_list += new_urls
 
     deleted_urls = list(previously_harvested.keys())
@@ -191,8 +200,11 @@ def main():
         logging.info("No changes made to previously harvested state")
 
     # Record harvested hash data in S3
-    upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key)
+    upload_file_s3(
+        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key
+    )
     logging.info(f"Harvested files: {latest_harvested}")
+    logging.info(output_data)
 
     return output_data
 
