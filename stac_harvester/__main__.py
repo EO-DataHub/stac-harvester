@@ -153,8 +153,6 @@ def main():
     logging.info(f"Previously harvested URLs: {previously_harvested}")
     latest_harvested = {}
 
-    max_url_list = 0
-
     while url_list:
         url = url_list.pop(0)
         logging.info(f"Parsing URL: {url}")
