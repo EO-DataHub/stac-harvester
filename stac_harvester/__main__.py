@@ -110,7 +110,7 @@ def find_urls(
         href = link.get("href")
         if (
             href not in new_urls
-            and link.get("rel") in {"child", "items", "item", "self"}
+            and link.get("rel") in {"child", "items", "self"}
             and check_add_url(href, source_url, urls_to_parse, parsed_urls)
         ):
             if link.get("rel") == "items":
