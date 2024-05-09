@@ -110,10 +110,10 @@ def find_urls(
         href = link.get("href")
         if (
             href not in new_urls
-            and link.get("rel") in {"child", "items", "self"}
+            and link.get("rel") in {"child", "items", "item", "self"}
             and check_add_url(href, source_url, urls_to_parse, parsed_urls)
         ):
-            if href.endswith("items") or href.endswith("items/"):
+            if link.get("rel") in {"items", "item"}:
                 href = href.rstrip("/") + f"?limit={limit}"
             new_urls.append(href)
     logging.info(f"Found child URLs: {new_urls}")
@@ -152,6 +152,8 @@ def main():
     previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key)
     logging.info(f"Previously harvested URLs: {previously_harvested}")
     latest_harvested = {}
+
+    max_url_list = 0
 
     while url_list:
         url = url_list.pop(0)
