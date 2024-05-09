@@ -113,7 +113,7 @@ def find_urls(
             and link.get("rel") in {"child", "items", "item", "self"}
             and check_add_url(href, source_url, urls_to_parse, parsed_urls)
         ):
-            if link.get("rel") in {"items", "item"}:
+            if link.get("rel") == "items":
                 href = href.rstrip("/") + f"?limit={limit}"
             new_urls.append(href)
     logging.info(f"Found child URLs: {new_urls}")
