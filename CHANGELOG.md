@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.1 (08-05-2024)
+
+- Add limit for number of items to return
+
 ## v0.1.0 (23-04-2024)
 
 - Initial commit of STAC Harvester
