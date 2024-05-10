@@ -173,9 +173,7 @@ def main():
         parsed_url_list.append(url)
 
         # Add all valid child links to the URL stack
-        new_urls = find_urls(
-            file_contents, args.source_url, url_list, parsed_url_list, args.limit
-        )
+        new_urls = find_urls(file_contents, args.source_url, url_list, parsed_url_list, args.limit)
         url_list += new_urls
 
     deleted_urls = list(previously_harvested.keys())
@@ -200,9 +198,7 @@ def main():
         logging.info("No changes made to previously harvested state")
 
     # Record harvested hash data in S3
-    upload_file_s3(
-        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key
-    )
+    upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key)
     logging.info(f"Harvested files: {latest_harvested}")
     logging.info(output_data)
 
