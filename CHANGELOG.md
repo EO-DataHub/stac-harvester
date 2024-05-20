@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.2 (20-05-2024)
+
+- Add curl and kubectl for deployment
+
+
 ## v0.1.1 (08-05-2024)
 
 - Add limit for number of items to return
