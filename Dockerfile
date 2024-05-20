@@ -19,4 +19,4 @@ ADD stac_harvester ./stac_harvester/
 ADD pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip pip3 install -r requirements.txt .
 
-CMD python -m stac_harvester $1 $2 $3 $4
+ENTRYPOINT ["python", "-m", "stac_harvester"]
