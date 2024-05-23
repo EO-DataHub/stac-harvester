@@ -17,8 +17,6 @@ parser.add_argument("workspace_name", help="Name of the workspace", type=str)
 parser.add_argument("sub_catalog", help="Name of the STAC sub catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
-pulsar_url = os.environ.get("PULSAR_URL")
-pulsar_client = PulsarClient(pulsar_url)
 
 if os.getenv("AWS_ACCESS_KEY") and os.getenv("AWS_SECRET_ACCESS_KEY"):
     session = boto3.session.Session(
@@ -120,6 +118,10 @@ def main():
     args = parser.parse_args()
     added_urls = []
     updated_urls = []
+
+    pulsar_url = os.environ.get("PULSAR_URL")
+    pulsar_client = PulsarClient(pulsar_url)
+
     producer = pulsar_client.create_producer(topic="harvested", producer_name="stac_harvester")
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
