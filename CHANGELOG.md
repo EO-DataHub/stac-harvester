@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.3 (20-05-2024)
+
+- Use Pystac
+
 ## v0.1.2 (20-05-2024)
 
 - Add curl and kubectl for deployment
