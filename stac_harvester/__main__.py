@@ -18,19 +18,10 @@ parser.add_argument("sub_catalog", help="Name of the STAC sub catalog", type=str
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
 
-if os.getenv("AWS_ACCESS_KEY") and os.getenv("AWS_SECRET_ACCESS_KEY"):
-    session = boto3.session.Session(
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    )
-    s3_client = session.client("s3")
-else:
-    s3_client = boto3.client("s3")
-
 logging.basicConfig(level=logging.DEBUG, format="%(message)s")
 
 
-def upload_file_s3(body: str, bucket: str, key: str):
+def upload_file_s3(body: str, bucket: str, key: str, s3_client: boto3.client):
     """Upload data to an S3 bucket"""
     try:
         s3_client.put_object(Body=body, Bucket=bucket, Key=key)
@@ -38,7 +29,7 @@ def upload_file_s3(body: str, bucket: str, key: str):
         logging.error(f"File upload failed: {e}")
 
 
-def get_file_s3(bucket: str, key: str) -> str:
+def get_file_s3(bucket: str, key: str, s3_client: boto3.client) -> str:
     """Retrieve data from an S3 bucket"""
     try:
         file_obj = s3_client.get_object(Bucket=bucket, Key=key)
@@ -69,9 +60,9 @@ def get_file_hash(url: str, retries: int = 0) -> str:
     return _md5_hash(body)
 
 
-def get_metadata(bucket: str, key: str) -> dict:
+def get_metadata(bucket: str, key: str, s3_client: boto3.client) -> dict:
     """Read file at given S3 location and parse as JSON"""
-    previously_harvested = get_file_s3(bucket, key)
+    previously_harvested = get_file_s3(bucket, key, s3_client)
     try:
         previously_harvested = json.loads(previously_harvested)
     except TypeError:
@@ -115,6 +106,16 @@ def main():
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
     harvested"""
+
+    if os.getenv("AWS_ACCESS_KEY") and os.getenv("AWS_SECRET_ACCESS_KEY"):
+        session = boto3.session.Session(
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+        s3_client = session.client("s3")
+    else:
+        s3_client = boto3.client("s3")
+
     args = parser.parse_args()
     added_urls = []
     updated_urls = []
@@ -126,7 +127,7 @@ def main():
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
-    previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key)
+    previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key, s3_client)
     logging.info(f"Previously harvested URLs: {previously_harvested}")
     latest_harvested = {}
 
@@ -169,7 +170,9 @@ def main():
         logging.info("No changes made to previously harvested state")
 
     # Record harvested hash data in S3
-    upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key)
+    upload_file_s3(
+        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
+    )
     logging.info(f"Harvested files: {latest_harvested}")
     logging.info(output_data)
 

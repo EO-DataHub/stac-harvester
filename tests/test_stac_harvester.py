@@ -59,6 +59,7 @@ def test_find_urls():
     assert f"{source_url}/link_1" in result
 
 
+@moto.mock_aws()
 def test_main(parameters, mocker: MockerFixture):
     """Test that the main stac havester function produces a correct pulsar message and updates
     known metadata in S3"""
