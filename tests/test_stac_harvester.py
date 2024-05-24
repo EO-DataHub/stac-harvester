@@ -7,9 +7,10 @@ from unittest import mock
 import boto3
 import moto
 import pytest
-import stac_harvester.__main__ as stac_harvester
 from munch import DefaultMunch
 from pytest_mock import MockerFixture
+
+import stac_harvester.__main__ as stac_harvester
 
 
 @pytest.fixture(autouse=True)
