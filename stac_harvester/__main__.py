@@ -3,13 +3,16 @@ import hashlib
 import json
 import logging
 import os
+import urllib.parse
 import urllib.request
+from itertools import chain
 from urllib.request import urlopen
 
 import boto3
 from botocore.exceptions import ClientError
 from pulsar import Client as PulsarClient
 from pystac_client import Client as PystacClient
+from pystac_client.errors import ClientTypeError
 
 parser = argparse.ArgumentParser()
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
@@ -74,8 +77,21 @@ def find_urls(source_url: str) -> set:
     """Returns all links to URLs that are children of the given source URL"""
     urls = {source_url}
 
-    client = PystacClient.open(source_url)
-    all_items = client.get_all_items()
+    try:
+        client = PystacClient.open(source_url)
+        all_items = client.get_all_items()
+    except ClientTypeError:
+        top_level = urllib.parse.urlparse(source_url)
+
+        client = PystacClient.open(f"{top_level.scheme}://{top_level.netloc}")
+        all_collections = client.get_collections()
+        all_items = []
+        for collection in all_collections:
+            if top_level.path.endswith(f"/{collection.id}"):
+                collection_id = collection.id
+                collection = client.get_collection(collection_id)
+                all_items = chain(all_items, collection.get_items(recursive=True))
+
     for item in all_items:
         for link in item.links:
             if target := link.target:
