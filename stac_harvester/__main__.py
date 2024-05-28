@@ -79,7 +79,14 @@ def find_urls(source_url: str) -> set:
     for item in all_items:
         for link in item.links:
             if target := link.target:
-                if link.rel in {"child", "items", "item", "self", "parent", "collection"} and is_valid_url(target, source_url):
+                if link.rel in {
+                    "child",
+                    "items",
+                    "item",
+                    "self",
+                    "parent",
+                    "collection",
+                } and is_valid_url(target, source_url):
                     urls.add(target)
 
     return urls
