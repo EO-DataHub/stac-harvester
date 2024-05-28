@@ -40,7 +40,7 @@ def get_file_s3(bucket: str, key: str, s3_client: boto3.client) -> str:
 
 
 def get_file_hash(url: str, retries: int = 0) -> str:
-    """Returns contents and hash of data available at given URL"""
+    """Returns hash of data available at given URL"""
 
     def _md5_hash(byte_str: bytes) -> str:
         """Calculates an md5 hash for given bytestring"""
@@ -74,23 +74,13 @@ def find_urls(source_url: str) -> set:
     """Returns all links to URLs that are children of the given source URL"""
     urls = {source_url}
 
-    try:
-        client = PystacClient.open(source_url)
-        all_items = client.get_all_items()
-        for item in all_items:
-            for link in item.links:
-                if link.rel in {"child", "items", "item", "self", "parent", "collection"}:
-                    target = None
-                    if link.target:
-                        target = link.target
-                    elif link._target_href:
-                        target = link._target_href
-
-                    if target and is_valid_url(target, source_url):
-                        urls.add(target)
-
-    except Exception:
-        raise
+    client = PystacClient.open(source_url)
+    all_items = client.get_all_items()
+    for item in all_items:
+        for link in item.links:
+            if target := link.target:
+                if link.rel in {"child", "items", "item", "self", "parent", "collection"} and is_valid_url(target, source_url):
+                    urls.add(target)
 
     return urls
 
