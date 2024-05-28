@@ -82,13 +82,13 @@ def find_urls(source_url: str) -> set:
         all_items = client.get_all_items()
     except ClientTypeError:
         collection = Collection.from_file(source_url)
-        root_catalogue = [link.target for link in collection.links if link.rel == 'root'][0]
+        root_catalogue = [link.target for link in collection.links if link.rel == "root"][0]
 
         client = PystacClient.open(root_catalogue)
         all_collections = client.get_collections()
         all_items = []
         for collection in all_collections:
-            self_link = [link.target for link in collection.links if link.rel == 'self'][0]
+            self_link = [link.target for link in collection.links if link.rel == "self"][0]
             if self_link == source_url:
                 collection_id = collection.id
                 collection = client.get_collection(collection_id)
