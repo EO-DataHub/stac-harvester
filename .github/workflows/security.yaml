@@ -1,0 +1,30 @@
+name: Security scan
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+jobs:
+  build:
+    name: Check for vulnerabilities
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Security check - Bandit
+        uses: mdegis/bandit-action@v1.0.1
+        with:
+          path: "."
+          level: high
+          confidence: high
+          exit_zero: true
+          skips: B101
+
+      - name: Security check - Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'

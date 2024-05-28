@@ -2,13 +2,27 @@ import json
 import os
 import sys
 import tempfile
+from unittest import mock
 
 import boto3
 import moto
 import pytest
+from munch import DefaultMunch
 from pytest_mock import MockerFixture
 
 import stac_harvester.__main__ as stac_harvester
+
+
+@pytest.fixture(autouse=True)
+def setenvvar(monkeypatch):
+    with mock.patch.dict(os.environ, clear=True):
+        envvars = {
+            "PULSAR_URL": "https://mock.com",
+        }
+        for k, v in envvars.items():
+            monkeypatch.setenv(k, v)
+
+        yield
 
 
 @pytest.fixture
@@ -23,25 +37,30 @@ def parameters() -> dict:
 
 def test_find_urls():
     """Test that find_urls only returns urls from valid links within a given input string"""
-    input = {
+    source_url = "https://www.this-is-a-stac-url.com"
+    mock_catalogue_data = {
         "links": [
-            {"rel": "child", "href": "link_1"},
-            {"rel": "parent", "href": "invalid_rel"},
-            {"rel": "child", "href": "?invalid_link"},
+            {"rel": "child", "target": f"{source_url}/link_1"},
+            {"rel": "new_rel", "target": f"{source_url}/invalid_rel"},
+            {"rel": "child", "target": f"{source_url}/?invalid_link"},
             {"rel": "child"},
-            {"rel": "child", "href": "invalid_duplicate"},
-            {"rel": "child", "href": "link_1"},
+            {"rel": "child", "target": f"{source_url}/link_1"},
         ],
-        "subcategory": {"links": [{"rel": "child", "href": "link_2"}]},
     }
 
-    result = stac_harvester.find_urls(json.dumps(input), "", ["invalid_duplicate"], [])
+    mock_catalogue = DefaultMunch.fromDict(mock_catalogue_data)
+
+    mock_client = mock.MagicMock()
+    mock_client.open.return_value.get_all_items.return_value = [mock_catalogue]
+
+    with mock.patch("stac_harvester.__main__.PystacClient", mock_client):
+        result = stac_harvester.find_urls("https://www.this-is-a-stac-url.com")
 
     assert len(result) == 2
-    assert "link_1" in result
-    assert "link_2" in result
+    assert f"{source_url}/link_1" in result
 
 
+@moto.mock_aws()
 def test_main(parameters, mocker: MockerFixture):
     """Test that the main stac havester function produces a correct pulsar message and updates
     known metadata in S3"""
@@ -60,8 +79,11 @@ def test_main(parameters, mocker: MockerFixture):
             "subcatalog-name",
             parameters["bucket_name"],
         ]
-        mocker.patch("stac_harvester.__main__.get_file_contents", return_value=("test", "hash"))
-        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.Client.create_producer")
+        mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
+        mocker.patch(
+            "stac_harvester.__main__.find_urls", return_value=["https://test-url.co.uk/collection"]
+        )
+        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.PulsarClient.create_producer")
         stac_harvester.main()
 
         # Verify output. URL is new and therefore in the "added" list
@@ -106,8 +128,11 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
             "subcatalog-name",
             parameters["bucket_name"],
         ]
-        mocker.patch("stac_harvester.__main__.get_file_contents", return_value=("test", "newhash"))
-        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.Client.create_producer")
+        mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
+        mocker.patch(
+            "stac_harvester.__main__.find_urls", return_value=["https://test-url.co.uk/collection"]
+        )
+        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.PulsarClient.create_producer")
         stac_harvester.main()
 
         # Verify output. URL already existed but the hash is different. URL is in the "updated" list
