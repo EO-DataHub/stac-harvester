@@ -90,8 +90,7 @@ def find_urls(source_url: str) -> set:
         for collection in all_collections:
             self_link = [link.target for link in collection.links if link.rel == "self"][0]
             if self_link == source_url:
-                collection_id = collection.id
-                collection = client.get_collection(collection_id)
+                collection = client.get_collection(collection.id)
                 all_items = chain(all_items, collection.get_items(recursive=True))
 
     for item in all_items:
