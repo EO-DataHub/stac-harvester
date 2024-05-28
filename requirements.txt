@@ -35,7 +35,7 @@ pulsar-client==3.4.0
     # via STAC-Harvester (pyproject.toml)
 pystac[validation]==1.10.1
     # via
-    #   pystac
+    #   STAC-Harvester (pyproject.toml)
     #   pystac-client
 pystac-client==0.7.7
     # via STAC-Harvester (pyproject.toml)

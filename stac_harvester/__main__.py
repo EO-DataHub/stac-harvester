@@ -3,7 +3,6 @@ import hashlib
 import json
 import logging
 import os
-import urllib.parse
 import urllib.request
 from itertools import chain
 from urllib.request import urlopen
@@ -11,6 +10,7 @@ from urllib.request import urlopen
 import boto3
 from botocore.exceptions import ClientError
 from pulsar import Client as PulsarClient
+from pystac import Collection
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
@@ -81,13 +81,15 @@ def find_urls(source_url: str) -> set:
         client = PystacClient.open(source_url)
         all_items = client.get_all_items()
     except ClientTypeError:
-        top_level = urllib.parse.urlparse(source_url)
+        collection = Collection.from_file(source_url)
+        root_catalogue = [link.target for link in collection.links if link.rel == 'root'][0]
 
-        client = PystacClient.open(f"{top_level.scheme}://{top_level.netloc}")
+        client = PystacClient.open(root_catalogue)
         all_collections = client.get_collections()
         all_items = []
         for collection in all_collections:
-            if top_level.path.endswith(f"/{collection.id}"):
+            self_link = [link.target for link in collection.links if link.rel == 'self'][0]
+            if self_link == source_url:
                 collection_id = collection.id
                 collection = client.get_collection(collection_id)
                 all_items = chain(all_items, collection.get_items(recursive=True))
