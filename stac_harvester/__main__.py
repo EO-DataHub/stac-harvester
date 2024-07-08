@@ -17,7 +17,7 @@ from pystac_client.errors import ClientTypeError
 parser = argparse.ArgumentParser()
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
-parser.add_argument("sub_catalog", help="Name of the STAC sub catalog", type=str)
+parser.add_argument("catalog", help="Path of the STAC catalog or collection", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
 
@@ -179,7 +179,7 @@ def main():
         "updated_keys": updated_urls,
         "deleted_keys": deleted_urls,
         "source": args.source_url,
-        "target": f"supported-datasets/{args.sub_catalog}{end_slash}",
+        "target": f"{args.catalog}{end_slash}",
     }
 
     if any([added_urls, updated_urls, deleted_urls]):
