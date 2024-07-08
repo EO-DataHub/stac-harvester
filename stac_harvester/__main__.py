@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
 parser.add_argument("catalog", help="Path of the STAC catalog or collection", type=str)
+parser.add_argument("sub_catalog", help="Name of the STAC sub catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
 
@@ -115,6 +116,20 @@ def is_valid_url(url: str, source_url: str) -> bool:
         return True
     return False
 
+def generate_target(catalog: str, subcatalog: str, workspace_name: str, source_url: str) -> str:
+    """Generate target string for harvested links"""
+    # Ensure target and source are aligned with trailing slash, if provided in source
+    if source_url.endswith("/"):
+        end_slash = "/"
+    else:
+        end_slash = ""
+    
+    # If data is to be ingested into 'user-datasets', need to specify workspace
+    if catalog == "user-datasets":
+        return f"{catalog}/{workspace_name}/{subcatalog}{end_slash}"
+    else: # e.g. 'supported-datasets'
+        return f"{catalog}/{subcatalog}{end_slash}"
+
 
 def main():
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
@@ -165,12 +180,6 @@ def main():
     deleted_urls = list(previously_harvested.keys())
     logging.info(f"Previously harvested URLs not found: {deleted_urls}")
 
-    # Ensure target and source are aligned with trailing slash, if provided in source
-    if args.source_url.endswith("/"):
-        end_slash = "/"
-    else:
-        end_slash = ""
-
     output_data = {
         "id": f"{args.workspace_name}/{args.source_url}",
         "workspace": args.workspace_name,
@@ -179,7 +188,7 @@ def main():
         "updated_keys": updated_urls,
         "deleted_keys": deleted_urls,
         "source": args.source_url,
-        "target": f"{args.catalog}{end_slash}",
+        "target": generate_target(args.catalog, args.sub_catalog, args.workspace_name, args.source_url),
     }
 
     if any([added_urls, updated_urls, deleted_urls]):
