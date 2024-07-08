@@ -165,6 +165,12 @@ def main():
     deleted_urls = list(previously_harvested.keys())
     logging.info(f"Previously harvested URLs not found: {deleted_urls}")
 
+    # Ensure target and source are aligned with trailing slash, if provided in source
+    if args.source_url.endswith("/"):
+        end_slash = "/"
+    else:
+        end_slash = ""
+
     output_data = {
         "id": f"{args.workspace_name}/{args.source_url}",
         "workspace": args.workspace_name,
@@ -173,7 +179,7 @@ def main():
         "updated_keys": updated_urls,
         "deleted_keys": deleted_urls,
         "source": args.source_url,
-        "target": f"/user-datasets/{args.workspace_name}/{args.sub_catalog}/",
+        "target": f"supported-datasets/{args.sub_catalog}{end_slash}",
     }
 
     if any([added_urls, updated_urls, deleted_urls]):
