@@ -116,6 +116,7 @@ def is_valid_url(url: str, source_url: str) -> bool:
         return True
     return False
 
+
 def generate_target(catalog: str, subcatalog: str, workspace_name: str, source_url: str) -> str:
     """Generate target string for harvested links"""
     # Ensure target and source are aligned with trailing slash, if provided in source
@@ -123,11 +124,11 @@ def generate_target(catalog: str, subcatalog: str, workspace_name: str, source_u
         end_slash = "/"
     else:
         end_slash = ""
-    
+
     # If data is to be ingested into 'user-datasets', need to specify workspace
     if catalog == "user-datasets":
         return f"{catalog}/{workspace_name}/{subcatalog}{end_slash}"
-    else: # e.g. 'supported-datasets'
+    else:  # e.g. 'supported-datasets'
         return f"{catalog}/{subcatalog}{end_slash}"
 
 
@@ -152,7 +153,7 @@ def main():
     pulsar_url = os.environ.get("PULSAR_URL")
     pulsar_client = PulsarClient(pulsar_url)
 
-    producer = pulsar_client.create_producer(topic="harvested", producer_name="stac_harvester")
+    producer = pulsar_client.create_producer(topic="harvested", producer_name=f"stac_harvester/{args.source_url}")
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
@@ -188,7 +189,9 @@ def main():
         "updated_keys": updated_urls,
         "deleted_keys": deleted_urls,
         "source": args.source_url,
-        "target": generate_target(args.catalog, args.sub_catalog, args.workspace_name, args.source_url),
+        "target": generate_target(
+            args.catalog, args.sub_catalog, args.workspace_name, args.source_url
+        ),
     }
 
     if any([added_urls, updated_urls, deleted_urls]):
