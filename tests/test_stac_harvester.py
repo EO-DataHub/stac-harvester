@@ -76,6 +76,7 @@ def test_main(parameters, mocker: MockerFixture):
             None,
             parameters["url"],
             "workspace-name",
+            "catalog-name",
             "subcatalog-name",
             parameters["bucket_name"],
         ]
@@ -125,6 +126,7 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
             None,
             parameters["url"],
             "workspace-name",
+            "catalog-name",
             "subcatalog-name",
             parameters["bucket_name"],
         ]
