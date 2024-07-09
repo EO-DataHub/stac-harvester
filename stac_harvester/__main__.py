@@ -119,17 +119,17 @@ def is_valid_url(url: str, source_url: str) -> bool:
 
 def generate_target(catalog: str, subcatalog: str, workspace_name: str, source_url: str) -> str:
     """Generate target string for harvested links"""
-    # Ensure target and source are aligned with trailing slash, if provided in source
-    if source_url.endswith("/"):
-        end_slash = "/"
-    else:
-        end_slash = ""
 
     # If data is to be ingested into 'user-datasets', need to specify workspace
     if catalog == "user-datasets":
-        return f"{catalog}/{workspace_name}/{subcatalog}{end_slash}"
+        target = f"{catalog}/{workspace_name}/{subcatalog}"
     else:  # e.g. 'supported-datasets'
-        return f"{catalog}/{subcatalog}{end_slash}"
+        target = f"{catalog}/{subcatalog}"
+    
+    # Ensure target and source are aligned with trailing slash, if provided in source
+    if source_url.endswith("/"):
+        target += "/"
+    return target
 
 
 def main():
