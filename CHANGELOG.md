@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.4 (09-07-2024)
+
+- Support nested catalogs in file keys
+  - Update target output to support nested catalogs within file keys
+  - Add new "catalog" argument to determine workspace usage
+
 ## v0.1.3 (20-05-2024)
 
 - Use Pystac

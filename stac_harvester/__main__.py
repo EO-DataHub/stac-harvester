@@ -17,6 +17,7 @@ from pystac_client.errors import ClientTypeError
 parser = argparse.ArgumentParser()
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
+parser.add_argument("catalog", help="Path of the STAC catalog or collection", type=str)
 parser.add_argument("sub_catalog", help="Name of the STAC sub catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
@@ -116,6 +117,21 @@ def is_valid_url(url: str, source_url: str) -> bool:
     return False
 
 
+def generate_target(catalog: str, subcatalog: str, workspace_name: str, source_url: str) -> str:
+    """Generate target string for harvested links"""
+
+    # If data is to be ingested into 'user-datasets', need to specify workspace
+    if catalog == "user-datasets":
+        target = f"{catalog}/{workspace_name}/{subcatalog}"
+    else:  # e.g. 'supported-datasets'
+        target = f"{catalog}/{subcatalog}"
+    
+    # Ensure target and source are aligned with trailing slash, if provided in source
+    if source_url.endswith("/"):
+        target += "/"
+    return target
+
+
 def main():
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
@@ -137,7 +153,7 @@ def main():
     pulsar_url = os.environ.get("PULSAR_URL")
     pulsar_client = PulsarClient(pulsar_url)
 
-    producer = pulsar_client.create_producer(topic="harvested", producer_name="stac_harvester")
+    producer = pulsar_client.create_producer(topic="harvested", producer_name=f"stac_harvester/{args.source_url}")
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
@@ -173,7 +189,9 @@ def main():
         "updated_keys": updated_urls,
         "deleted_keys": deleted_urls,
         "source": args.source_url,
-        "target": f"/user-datasets/{args.workspace_name}/{args.sub_catalog}/",
+        "target": generate_target(
+            args.catalog, args.sub_catalog, args.workspace_name, args.source_url
+        ),
     }
 
     if any([added_urls, updated_urls, deleted_urls]):
