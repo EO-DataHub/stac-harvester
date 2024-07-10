@@ -4,7 +4,8 @@
 
 - Support nested catalogs in file keys
   - Update target output to support nested catalogs within file keys
-  - Add new "catalog" argument to determine workspace usage
+  - Updated input argument, "catalog", to define full catalog path. including workspace
+  - Updated unit tests
 
 ## v0.1.3 (20-05-2024)
 
