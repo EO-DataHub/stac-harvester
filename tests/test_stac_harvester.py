@@ -35,6 +35,24 @@ def parameters() -> dict:
     }
 
 
+def test_generate_target_no_slash():
+    test_catalog = "catalog"
+    test_source_url = "https://www.this-is-a-stac-url.com"
+
+    result = stac_harvester.generate_target(test_catalog, test_source_url)
+
+    assert result == test_catalog
+
+
+def test_generate_target_slash():
+    test_catalog = "catalog"
+    test_source_url = "https://www.this-is-a-stac-url.com/"
+
+    result = stac_harvester.generate_target(test_catalog, test_source_url)
+
+    assert result == test_catalog + "/"
+
+
 def test_find_urls():
     """Test that find_urls only returns urls from valid links within a given input string"""
     source_url = "https://www.this-is-a-stac-url.com"
@@ -77,7 +95,6 @@ def test_main(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
-            "subcatalog-name",
             parameters["bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
@@ -127,7 +144,6 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
-            "subcatalog-name",
             parameters["bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
