@@ -77,7 +77,6 @@ def test_main(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
-            "subcatalog-name",
             parameters["bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
@@ -127,7 +126,6 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
-            "subcatalog-name",
             parameters["bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
