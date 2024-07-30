@@ -7,6 +7,26 @@ A command line tool to harvest upstream STAC catalogs. This has the following re
 
 ## Installation
 
+### Install via makefile
+
+```commandline
+make setup
+```
+
+This will create a virtual environment called `venv`, build `requirements.txt` and
+`requirements-dev.txt` from `pyproject.toml` if they're out of date, install the Python
+and Node dependencies and install `pre-commit`.
+
+It's safe and fast to run `make setup` repeatedly as it will only update these things if
+they have changed.
+
+After `make setup` you can run `pre-commit` to run pre-commit checks on staged changes and
+`pre-commit run --all-files` to run them on all files. This replicates the linter checks that
+run from GitHub actions.
+
+
+### Alternative installation
+
 1. Follow the instructions [here](https://github.com/UKEODHP/template-python/blob/main/README.md) for installing a 
 Python 3.11 environment.
 2. Install dependencies:

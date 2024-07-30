@@ -1,0 +1,64 @@
+name: All checks
+on:
+  workflow_call:
+  push:
+    tags:
+      - 'v[0-9]+'
+      - 'v[0-9]+-*'
+      - 'v[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+-*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+    branches:
+      - '**'
+
+jobs:
+  pre-commit-preparation:
+    name: Pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Copy config
+        run: |
+          if [ ! -f .pre-commit-config.yaml ]; then
+            curl -o .pre-commit-config.yaml https://raw.githubusercontent.com/EO-DataHub/github-actions/main/.pre-commit-config-python.yaml
+          fi          
+
+      - uses: pre-commit/action@v3.0.1
+
+  security-scan:
+    name: Call Security Scan
+    uses: EO-DataHub/github-actions/.github/workflows/security.yaml@main
+
+  unit-tests:
+    name: Run unit tests
+    uses: EO-DataHub/github-actions/.github/workflows/unit-tests-python.yaml@main
+
+  get-tag-name:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.get-image-tag.outputs.IMAGE_TAG }}
+    steps:
+      - name: Get image tag
+        id: get-image-tag
+        run: |
+          IMAGE_TAG=$(if [[ "${GITHUB_REF##refs/tags/}" =~ ^v ]]; then echo ${GITHUB_REF##refs/tags/v}; elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then echo "latest"; else echo "${GITHUB_REF##refs/heads/}-latest" | sed "s/[^a-zA-Z0-9]/-/g" ; fi) >> "$GITHUB_ENV"
+          echo $IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+  aws-ecr-build:
+    name: Build ECR image
+    needs: get-tag-name
+    uses: EO-DataHub/github-actions/.github/workflows/docker-image-to-aws-ecr.yaml@main
+    with:
+      image_name: stac-harvester
+      image_tag: ${{ needs.get-tag-name.outputs.image_tag }}
+    permissions:
+      id-token: write
+      contents: read
+    secrets:
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_ECR: ${{ secrets.AWS_ECR }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
