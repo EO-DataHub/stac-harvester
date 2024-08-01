@@ -89,7 +89,9 @@ dev = [
     "black~=24.4.0",
     "ruff~=0.4.1",
     "moto~=5.0.5",
-    "munch~=4.0.0"
+    "munch~=4.0.0",
+    "isort",
+    "pre-commit"
 ]
 
 # List URLs that are relevant to your project
