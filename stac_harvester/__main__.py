@@ -87,6 +87,13 @@ def find_urls(source_url: str) -> set:
         client = PystacClient.open(root_catalogue)
         all_collections = client.get_collections()
         all_items = []
+
+        # Delete these lines
+        import itertools  # noqa: F401
+
+        all_collections = itertools.islice(all_collections, 0, 2)  # First two items
+        # End of line deletion
+
         for collection in all_collections:
             self_link = [link.target for link in collection.links if link.rel == "self"][0]
             if self_link == source_url:
