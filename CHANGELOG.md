@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.5 (11-10-2024)
+
+- Add chunking to pulsar messages
+
 ## v0.1.4 (09-07-2024)
 
 - Support nested catalogs in file keys

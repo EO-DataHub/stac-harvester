@@ -147,7 +147,7 @@ def main():
     pulsar_client = PulsarClient(pulsar_url)
 
     producer = pulsar_client.create_producer(
-        topic="harvested", producer_name=f"stac_harvester/{args.source_url}"
+        topic="harvested", producer_name=f"stac_harvester/{args.source_url}", chunking_enabled=True
     )
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
