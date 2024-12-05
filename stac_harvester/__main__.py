@@ -14,11 +14,14 @@ from pystac import Collection
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
+from .stac_harvester_messager import STACHarvesterMessager
+
 parser = argparse.ArgumentParser()
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
 parser.add_argument("catalog", help="Path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
+parser.add_argument("files_s3_bucket", help="S3 bucket to store harvested files", type=str)
 
 
 logging.basicConfig(level=logging.DEBUG, format="%(message)s")
@@ -140,7 +143,7 @@ def main():
         s3_client = boto3.client("s3")
 
     args = parser.parse_args()
-    added_urls = []
+
     updated_urls = []
 
     pulsar_url = os.environ.get("PULSAR_URL")
@@ -149,6 +152,18 @@ def main():
     producer = pulsar_client.create_producer(
         topic="harvested", producer_name=f"stac_harvester/{args.source_url}", chunking_enabled=True
     )
+
+    target = generate_target(args.catalog, args.source_url)
+
+    stac_harvester = STACHarvesterMessager(
+        s3_client=s3_client,
+        output_bucket=args.files_s3_bucket,
+        cat_output_prefix="stac-harvester",
+        producer=producer,
+    )
+
+    print(stac_harvester)
+
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
@@ -161,47 +176,36 @@ def main():
     for url in url_list:
         logging.info(f"Parsing URL: {url}")
         file_hash = get_file_hash(url)
-
         previous_hash = previously_harvested.pop(url, None)
-        if not previous_hash:
-            # URL was not harvested previously
-            logging.info("Appended URL to 'added' list")
-            added_urls.append(url)
-        elif previous_hash != file_hash:
-            # URL has changed since last run
+        if not previous_hash or previous_hash != file_hash:
+            # URL was not harvested previously or has been updated
             logging.info("Appended URL to 'updated' list")
             updated_urls.append(url)
+            msg = {
+                "updated": True,
+                "url": url,
+                "source": args.source_url,
+                "target": target,
+            }
+            stac_harvester.consume(msg)
         latest_harvested[url] = file_hash
 
     deleted_urls = list(previously_harvested.keys())
-    logging.info(f"Previously harvested URLs not found: {deleted_urls}")
-
-    output_data = {
-        "id": f"{args.workspace_name}/{args.source_url}",
-        "workspace": args.workspace_name,
-        "bucket_name": args.metadata_s3_bucket,
-        "added_keys": added_urls,
-        "updated_keys": updated_urls,
-        "deleted_keys": deleted_urls,
-        "source": args.source_url,
-        "target": generate_target(args.catalog, args.source_url),
-    }
-
-    if any([added_urls, updated_urls, deleted_urls]):
-        # Send Pulsar message containing harvested links
-        producer.send((json.dumps(output_data)).encode("utf-8"))
-        logging.info(f"Sent harvested message {output_data}")
-    else:
-        logging.info("No changes made to previously harvested state")
+    for url in deleted_urls:
+        logging.info(f"Previously harvested URLs not found: {deleted_urls}")
+        msg = {
+            "updated": False,
+            "url": url,
+            "source": args.source_url,
+            "target": generate_target(args.catalog, args.source_url),
+        }
+        stac_harvester.consume(msg)
 
     # Record harvested hash data in S3
     upload_file_s3(
         json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
     )
     logging.info(f"Harvested files: {latest_harvested}")
-    logging.info(output_data)
-
-    return output_data
 
 
 if __name__ == "__main__":
