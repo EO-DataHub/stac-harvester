@@ -7,6 +7,7 @@ from unittest import mock
 import boto3
 import moto
 import pytest
+from botocore.client import BaseClient
 from munch import DefaultMunch
 from pytest_mock import MockerFixture
 
@@ -29,7 +30,8 @@ def setenvvar(monkeypatch):
 def parameters() -> dict:
     """Parameters used by stac harvester tests"""
     return {
-        "bucket_name": "test_bucket",
+        "metadata_bucket_name": "test_metadata_bucket",
+        "files_bucket_name": "test_files_bucket",
         "url": "https://test-url.co.uk/collection",
         "previously_harvested": {"https://test-url.co.uk/collection": "hash"},
     }
@@ -86,7 +88,7 @@ def test_main(parameters, mocker: MockerFixture):
     with moto.mock_aws():
         # Create S3 resources
         s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket=parameters["bucket_name"])
+        s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
         s3_resource = boto3.resource("s3")
 
         # Run STAC harvester
@@ -95,23 +97,44 @@ def test_main(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
-            parameters["bucket_name"],
+            parameters["metadata_bucket_name"],
+            parameters["files_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
         mocker.patch(
             "stac_harvester.__main__.find_urls", return_value=["https://test-url.co.uk/collection"]
         )
-        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.PulsarClient.create_producer")
-        stac_harvester.main()
 
-        # Verify output. URL is new and therefore in the "added" list
-        s3_files = list(s3_resource.Bucket(parameters["bucket_name"]).objects.all())
-        pulsar_message = pulsar_producer_mock.mock_calls[-1].args[0]
-        pulsar_json = json.loads(pulsar_message.decode("utf-8"))
-        assert pulsar_json["added_keys"] == [parameters["url"]]
-        assert pulsar_json["updated_keys"] == []
-        assert pulsar_json["deleted_keys"] == []
-        assert len(s3_files) == 1
+        mock_producer = mock.MagicMock()
+        mocker.patch(
+            "stac_harvester.__main__.PulsarClient.create_producer", return_value=mock_producer
+        )
+
+        with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
+            mock_messager_instance = mock_messager.return_value
+            mock_messager_instance.consume.return_value = None
+            stac_harvester.main()
+            test_msg = {
+                "updated": True,
+                "url": "https://test-url.co.uk/collection",
+                "source": parameters["url"],
+                "target": "catalog-name",
+            }
+
+            # Verify messager created correctly
+            mock_messager.assert_called_once_with(
+                s3_client=mock.ANY,
+                output_bucket=parameters["files_bucket_name"],
+                cat_output_prefix="stac-harvester",
+                producer=mock_producer,
+            )
+            assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
+            # Verify that the message is consumed by the messager
+            mock_messager_instance.consume.assert_called_once_with(test_msg)
+
+            # Verify that hashed data is uploaded to S3
+            s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
+            assert len(s3_files) == 1
 
 
 def test_main_with_previous_run(parameters, mocker: MockerFixture):
@@ -130,11 +153,11 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
 
         # Create S3 resources and upload file to S3
         s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket=parameters["bucket_name"])
+        s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
         s3_resource = boto3.resource("s3")
         s3.upload_file(
             local_file_path,
-            parameters["bucket_name"],
+            parameters["metadata_bucket_name"],
             f"harvested-metadata/{parameters['url'].replace('/', '')}",
         )
 
@@ -144,20 +167,39 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
-            parameters["bucket_name"],
+            parameters["metadata_bucket_name"],
+            parameters["files_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
             "stac_harvester.__main__.find_urls", return_value=["https://test-url.co.uk/collection"]
         )
-        pulsar_producer_mock = mocker.patch("stac_harvester.__main__.PulsarClient.create_producer")
-        stac_harvester.main()
+        mock_producer = mock.MagicMock()
+        mocker.patch(
+            "stac_harvester.__main__.PulsarClient.create_producer", return_value=mock_producer
+        )
 
-        # Verify output. URL already existed but the hash is different. URL is in the "updated" list
-        s3_files = list(s3_resource.Bucket(parameters["bucket_name"]).objects.all())
-        pulsar_message = pulsar_producer_mock.mock_calls[-1].args[0]
-        pulsar_json = json.loads(pulsar_message.decode("utf-8"))
-        assert pulsar_json["added_keys"] == []
-        assert pulsar_json["updated_keys"] == [parameters["url"]]
-        assert pulsar_json["deleted_keys"] == []
-        assert len(s3_files) == 1
+        with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
+            mock_messager_instance = mock_messager.return_value
+            mock_messager_instance.consume.return_value = None
+            stac_harvester.main()
+            test_msg = {
+                "updated": True,
+                "url": "https://test-url.co.uk/collection",
+                "source": parameters["url"],
+                "target": "catalog-name",
+            }
+            # Verify messager created correctly
+            mock_messager.assert_called_once_with(
+                s3_client=mock.ANY,
+                output_bucket=parameters["files_bucket_name"],
+                cat_output_prefix="stac-harvester",
+                producer=mock_producer,
+            )
+            assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
+            # Verify that the message is consumed by the messager
+            mock_messager_instance.consume.assert_called_once_with(test_msg)
+
+            # Verify that hashed data is uploaded to S3
+            s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
+            assert len(s3_files) == 1
