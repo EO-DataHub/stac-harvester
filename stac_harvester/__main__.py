@@ -155,7 +155,7 @@ def main():
 
     target = generate_target(args.catalog, args.source_url)
 
-    stac_harvester = STACHarvesterMessager(
+    stac_harvester_messager = STACHarvesterMessager(
         s3_client=s3_client,
         output_bucket=args.files_s3_bucket,
         cat_output_prefix="stac-harvester",
@@ -185,7 +185,7 @@ def main():
                 "source": args.source_url,
                 "target": target,
             }
-            stac_harvester.consume(msg)
+            stac_harvester_messager.consume(msg)
         latest_harvested[url] = file_hash
 
     deleted_urls = list(previously_harvested.keys())
@@ -197,7 +197,7 @@ def main():
             "source": args.source_url,
             "target": generate_target(args.catalog, args.source_url),
         }
-        stac_harvester.consume(msg)
+        stac_harvester_messager.consume(msg)
 
     # Record harvested hash data in S3
     upload_file_s3(
