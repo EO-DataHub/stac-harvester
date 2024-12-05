@@ -19,7 +19,7 @@ description = "Harvest upstream STAC catalogs"
 readme = "README.md"
 
 # Our target version is Python 3.11, but it may work with earlier versions.
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 license = {file = "LICENSE"}
 
@@ -64,11 +64,12 @@ classifiers = [
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [
-    "pulsar-client~=3.4.0",
-    "boto3~=1.34.82",
-    "botocore~=1.34.83",
-    "pystac-client~=0.7.7",
-    "pystac~=1.10.1"
+    "pulsar-client",
+    "boto3",
+    "botocore",
+    "pystac-client",
+    "pystac",
+    "eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@v0.1.3"
 ]
 
 # List additional groups of dependencies here (e.g. development
