@@ -162,8 +162,6 @@ def main():
         producer=producer,
     )
 
-    print(stac_harvester)
-
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
