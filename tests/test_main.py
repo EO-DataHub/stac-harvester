@@ -131,7 +131,7 @@ def test_main(parameters, mocker: MockerFixture):
             mock_messager.assert_called_once_with(
                 s3_client=mock.ANY,
                 output_bucket=parameters["files_bucket_name"],
-                cat_output_prefix="stac-harvester",
+                cat_output_prefix="stac-harvester/",
                 producer=mock_producer,
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
@@ -198,7 +198,7 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture):
             mock_messager.assert_called_once_with(
                 s3_client=mock.ANY,
                 output_bucket=parameters["files_bucket_name"],
-                cat_output_prefix="stac-harvester",
+                cat_output_prefix="stac-harvester/",
                 producer=mock_producer,
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
@@ -269,7 +269,7 @@ def test_main_with_previous_run_deleted(parameters, mocker: MockerFixture):
             mock_messager.assert_called_once_with(
                 s3_client=mock.ANY,
                 output_bucket=parameters["files_bucket_name"],
-                cat_output_prefix="stac-harvester",
+                cat_output_prefix="stac-harvester/",
                 producer=mock_producer,
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)

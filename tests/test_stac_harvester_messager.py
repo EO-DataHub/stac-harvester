@@ -20,7 +20,7 @@ def test_process_msg_updated(mocker: MockerFixture):
     test_stac_harvester = STACHarvesterMessager(
         s3_client=mock_s3_client,
         output_bucket="files_bucket_name",
-        cat_output_prefix="stac-harvester",
+        cat_output_prefix="stac-harvester/",
         producer=mock_producer,
     )
 
@@ -54,7 +54,7 @@ def test_process_msg_deleted(mocker: MockerFixture):
     test_stac_harvester = STACHarvesterMessager(
         s3_client=mock_s3_client,
         output_bucket="files_bucket_name",
-        cat_output_prefix="stac-harvester",
+        cat_output_prefix="stac-harvester/",
         producer=mock_producer,
     )
 
@@ -91,7 +91,7 @@ def test_process_msg_update_and_delete(mocker: MockerFixture):
     test_stac_harvester = STACHarvesterMessager(
         s3_client=mock_s3_client,
         output_bucket="files_bucket_name",
-        cat_output_prefix="stac-harvester",
+        cat_output_prefix="stac-harvester/",
         producer=mock_producer,
     )
 
@@ -133,7 +133,7 @@ def test_gen_empty_catalogue_message():
     test_stac_harvester = STACHarvesterMessager(
         s3_client=mock_s3_client,
         output_bucket="files_bucket_name",
-        cat_output_prefix="stac-harvester",
+        cat_output_prefix="stac-harvester/",
         producer=mock_producer,
     )
 

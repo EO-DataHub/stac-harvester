@@ -158,7 +158,7 @@ def main():
     stac_harvester_messager = STACHarvesterMessager(
         s3_client=s3_client,
         output_bucket=args.files_s3_bucket,
-        cat_output_prefix="stac-harvester",
+        cat_output_prefix="stac-harvester/",
         producer=producer,
     )
 
