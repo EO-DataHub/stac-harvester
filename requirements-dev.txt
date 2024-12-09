@@ -98,9 +98,7 @@ pluggy==1.5.0
 pre-commit==4.0.1
     # via STAC-Harvester (pyproject.toml)
 pulsar-client==3.4.0
-    # via
-    #   STAC-Harvester (pyproject.toml)
-    #   eodhp-utils
+    # via eodhp-utils
 pycparser==2.22
     # via cffi
 pyproject-hooks==1.2.0

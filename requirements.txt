@@ -39,9 +39,7 @@ jsonschema==4.23.0
 jsonschema-specifications==2024.10.1
     # via jsonschema
 pulsar-client==3.4.0
-    # via
-    #   STAC-Harvester (pyproject.toml)
-    #   eodhp-utils
+    # via eodhp-utils
 pystac[validation]==1.10.1
     # via
     #   STAC-Harvester (pyproject.toml)
