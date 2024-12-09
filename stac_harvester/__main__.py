@@ -171,6 +171,9 @@ def main():
 
     url_list = find_urls(args.source_url)
 
+    messsages = {"source": args.source_url, "target": target}
+    files = []
+
     for url in url_list:
         logging.info(f"Parsing URL: {url}")
         file_hash = get_file_hash(url)
@@ -182,10 +185,8 @@ def main():
             msg = {
                 "updated": True,
                 "url": url,
-                "source": args.source_url,
-                "target": target,
             }
-            stac_harvester_messager.consume(msg)
+            files.append(msg)
         latest_harvested[url] = file_hash
 
     deleted_urls = list(previously_harvested.keys())
@@ -194,10 +195,11 @@ def main():
         msg = {
             "updated": False,
             "url": url,
-            "source": args.source_url,
-            "target": generate_target(args.catalog, args.source_url),
         }
-        stac_harvester_messager.consume(msg)
+        files.append(msg)
+
+    messsages["files"] = files
+    stac_harvester_messager.consume(messsages)
 
     # Record harvested hash data in S3
     upload_file_s3(

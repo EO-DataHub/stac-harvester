@@ -115,8 +115,7 @@ def test_main(parameters, mocker: MockerFixture):
             mock_messager_instance.consume.return_value = None
             stac_harvester.main()
             test_msg = {
-                "updated": True,
-                "url": "https://test-url.co.uk/collection",
+                "files": [{"updated": True, "url": "https://test-url.co.uk/collection"}],
                 "source": parameters["url"],
                 "target": "catalog-name",
             }
@@ -184,8 +183,7 @@ def test_main_with_previous_run(parameters, mocker: MockerFixture):
             mock_messager_instance.consume.return_value = None
             stac_harvester.main()
             test_msg = {
-                "updated": True,
-                "url": "https://test-url.co.uk/collection",
+                "files": [{"updated": True, "url": "https://test-url.co.uk/collection"}],
                 "source": parameters["url"],
                 "target": "catalog-name",
             }

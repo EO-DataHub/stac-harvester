@@ -25,8 +25,12 @@ def test_process_msg_updated(mocker: MockerFixture):
     )
 
     test_msg = {
-        "updated": True,
-        "url": "https://test-url-to-catalog/collections/collection/items/item",
+        "files": [
+            {
+                "updated": True,
+                "url": "https://test-url-to-catalog/collections/collection/items/item",
+            }
+        ],
         "source": "https://test-url-to-catalog",
         "target": "test-catalog",
     }
@@ -55,8 +59,12 @@ def test_process_msg_deleted(mocker: MockerFixture):
     )
 
     test_msg = {
-        "updated": False,
-        "url": "https://test-url-to-catalog/collections/collection/items/item",
+        "files": [
+            {
+                "updated": False,
+                "url": "https://test-url-to-catalog/collections/collection/items/item",
+            }
+        ],
         "source": "https://test-url-to-catalog",
         "target": "test-catalog",
     }
@@ -84,8 +92,12 @@ def test_gen_empty_catalogue_message():
     )
 
     test_msg = {
-        "updated": True,
-        "url": "https://test-url-to-catalog/collections/collection/items/item",
+        "files": [
+            {
+                "updated": True,
+                "url": "https://test-url-to-catalog/collections/collection/items/item",
+            }
+        ],
         "source": "https://test-url-to-catalog",
         "target": "test-catalog",
     }
