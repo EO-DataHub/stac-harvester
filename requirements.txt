@@ -24,7 +24,7 @@ certifi==2024.8.30
     #   requests
 charset-normalizer==3.4.0
     # via requests
-eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@v0.1.3
+eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@v0.1.4
     # via STAC-Harvester (pyproject.toml)
 idna==3.10
     # via requests
