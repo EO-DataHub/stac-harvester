@@ -2,14 +2,13 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import urllib.request
 from itertools import chain
 from urllib.request import urlopen
 
 import boto3
 from botocore.exceptions import ClientError
-from pulsar import Client as PulsarClient
+from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
 from pystac import Collection
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
@@ -24,7 +23,7 @@ parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested met
 parser.add_argument("files_s3_bucket", help="S3 bucket to store harvested files", type=str)
 
 
-logging.basicConfig(level=logging.DEBUG, format="%(message)s")
+setup_logging()
 
 
 def upload_file_s3(body: str, bucket: str, key: str, s3_client: boto3.client):
@@ -133,21 +132,13 @@ def main():
     containing all added, updated, and deleted links since the last time the catalog was
     harvested"""
 
-    if os.getenv("AWS_ACCESS_KEY") and os.getenv("AWS_SECRET_ACCESS_KEY"):
-        session = boto3.session.Session(
-            aws_access_key_id=os.environ["AWS_ACCESS_KEY"],
-            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-        )
-        s3_client = session.client("s3")
-    else:
-        s3_client = boto3.client("s3")
+    s3_client = get_boto3_session().client("s3")
 
     args = parser.parse_args()
 
     updated_urls = []
 
-    pulsar_url = os.environ.get("PULSAR_URL")
-    pulsar_client = PulsarClient(pulsar_url)
+    pulsar_client = get_pulsar_client()
 
     producer = pulsar_client.create_producer(
         topic="harvested", producer_name=f"stac_harvester/{args.source_url}", chunking_enabled=True
@@ -174,6 +165,7 @@ def main():
     messsages = {"source": args.source_url, "target": target}
     files = []
 
+    # Pulsar messages are sent once for every 100 entities
     for url in url_list:
         logging.info(f"Parsing URL: {url}")
         file_hash = get_file_hash(url)
@@ -188,6 +180,14 @@ def main():
             }
             files.append(msg)
         latest_harvested[url] = file_hash
+        if len(files) >= 100:
+            messsages["files"] = files
+            stac_harvester_messager.consume(messsages)
+            files = []
+    if len(files) >= 100:
+        messsages["files"] = files
+        stac_harvester_messager.consume(messsages)
+        files = []
 
     deleted_urls = list(previously_harvested.keys())
     for url in deleted_urls:
@@ -197,9 +197,13 @@ def main():
             "url": url,
         }
         files.append(msg)
-
-    messsages["files"] = files
-    stac_harvester_messager.consume(messsages)
+        if len(files) >= 100:
+            messsages["files"] = files
+            stac_harvester_messager.consume(messsages)
+            files = []
+    if files:
+        messsages["files"] = files
+        stac_harvester_messager.consume(messsages)
 
     # Record harvested hash data in S3
     upload_file_s3(
