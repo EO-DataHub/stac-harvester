@@ -109,10 +109,10 @@ def test_main(parameters, mocker: MockerFixture):
             ],
         )
 
+        mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
-        mocker.patch(
-            "stac_harvester.__main__.PulsarClient.create_producer", return_value=mock_producer
-        )
+        mock_pulsar_client.create_producer.return_value = mock_producer
+        mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
 
         with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
             mock_messager_instance = mock_messager.return_value
@@ -180,10 +180,10 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture):
         mocker.patch(
             "stac_harvester.__main__.find_urls", return_value=["https://test-url.co.uk/collection"]
         )
+        mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
-        mocker.patch(
-            "stac_harvester.__main__.PulsarClient.create_producer", return_value=mock_producer
-        )
+        mock_pulsar_client.create_producer.return_value = mock_producer
+        mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
 
         with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
             mock_messager_instance = mock_messager.return_value
@@ -248,10 +248,10 @@ def test_main_with_previous_run_deleted(parameters, mocker: MockerFixture):
             "stac_harvester.__main__.find_urls",
             return_value=["https://test-url.co.uk/collection_new"],
         )
+        mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
-        mocker.patch(
-            "stac_harvester.__main__.PulsarClient.create_producer", return_value=mock_producer
-        )
+        mock_pulsar_client.create_producer.return_value = mock_producer
+        mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
 
         with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
             mock_messager_instance = mock_messager.return_value
