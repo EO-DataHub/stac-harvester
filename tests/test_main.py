@@ -98,7 +98,6 @@ def test_main(parameters, mocker: MockerFixture):
             "workspace-name",
             "catalog-name",
             parameters["metadata_bucket_name"],
-            parameters["files_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
         mocker.patch(
@@ -130,7 +129,7 @@ def test_main(parameters, mocker: MockerFixture):
             # Verify messager created correctly
             mock_messager.assert_called_once_with(
                 s3_client=mock.ANY,
-                output_bucket=parameters["files_bucket_name"],
+                output_bucket=parameters["metadata_bucket_name"],
                 cat_output_prefix="stac-harvester/",
                 producer=mock_producer,
             )
@@ -174,7 +173,6 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture):
             "workspace-name",
             "catalog-name",
             parameters["metadata_bucket_name"],
-            parameters["files_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
@@ -197,7 +195,7 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture):
             # Verify messager created correctly
             mock_messager.assert_called_once_with(
                 s3_client=mock.ANY,
-                output_bucket=parameters["files_bucket_name"],
+                output_bucket=parameters["metadata_bucket_name"],
                 cat_output_prefix="stac-harvester/",
                 producer=mock_producer,
             )
@@ -241,7 +239,6 @@ def test_main_with_previous_run_deleted(parameters, mocker: MockerFixture):
             "workspace-name",
             "catalog-name",
             parameters["metadata_bucket_name"],
-            parameters["files_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
@@ -268,7 +265,7 @@ def test_main_with_previous_run_deleted(parameters, mocker: MockerFixture):
             # Verify messager created correctly
             mock_messager.assert_called_once_with(
                 s3_client=mock.ANY,
-                output_bucket=parameters["files_bucket_name"],
+                output_bucket=parameters["metadata_bucket_name"],
                 cat_output_prefix="stac-harvester/",
                 producer=mock_producer,
             )

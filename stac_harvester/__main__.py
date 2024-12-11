@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import urllib.request
 from itertools import chain
 from urllib.request import urlopen
@@ -23,6 +24,8 @@ parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested met
 
 
 setup_logging()
+
+minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
 
 
 def get_file_hash(url: str, retries: int = 0) -> str:
@@ -161,11 +164,11 @@ def main():
             }
             files.append(msg)
         latest_harvested[url] = file_hash
-        if len(files) >= 100:
+        if len(files) >= minimum_message_entries:
             messsages["files"] = files
             stac_harvester_messager.consume(messsages)
             files = []
-    if len(files) >= 100:
+    if len(files) >= minimum_message_entries:
         messsages["files"] = files
         stac_harvester_messager.consume(messsages)
         files = []
@@ -178,7 +181,7 @@ def main():
             "url": url,
         }
         files.append(msg)
-        if len(files) >= 100:
+        if len(files) >= minimum_message_entries:
             messsages["files"] = files
             stac_harvester_messager.consume(messsages)
             files = []

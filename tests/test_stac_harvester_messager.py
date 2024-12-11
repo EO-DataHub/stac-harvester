@@ -37,7 +37,7 @@ def test_process_msg_updated(mocker: MockerFixture):
 
     expected_action = Messager.OutputFileAction(
         file_body=json.dumps({"type": "Feature", "id": "test-item"}),
-        cat_path="supported-datasets/test-catalog/collections/collection/items/item",
+        cat_path="test-catalog/collections/collection/items/item",
     )
 
     result = test_stac_harvester.process_msg(test_msg)
@@ -71,7 +71,7 @@ def test_process_msg_deleted(mocker: MockerFixture):
 
     expected_action = Messager.OutputFileAction(
         file_body=None,
-        cat_path="supported-datasets/test-catalog/collections/collection/items/item",
+        cat_path="test-catalog/collections/collection/items/item",
     )
 
     result = test_stac_harvester.process_msg(test_msg)
@@ -112,12 +112,12 @@ def test_process_msg_update_and_delete(mocker: MockerFixture):
 
     expected_action_1 = Messager.OutputFileAction(
         file_body=json.dumps({"type": "Feature", "id": "test-item"}),
-        cat_path="supported-datasets/test-catalog/collections/collection/items/item1",
+        cat_path="test-catalog/collections/collection/items/item1",
     )
 
     expected_action_2 = Messager.OutputFileAction(
         file_body=None,
-        cat_path="supported-datasets/test-catalog/collections/collection/items/item2",
+        cat_path="test-catalog/collections/collection/items/item2",
     )
 
     result = test_stac_harvester.process_msg(test_msg)

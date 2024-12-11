@@ -30,7 +30,7 @@ class STACHarvesterMessager(Messager[str]):
                 # bucket defaults to self.output_bucket
                 action = Messager.OutputFileAction(
                     file_body=json.dumps(stac_data),
-                    cat_path=f"supported-datasets/{m['url'].replace(msg['source'], msg['target'])}",
+                    cat_path=f"{m['url'].replace(msg['source'], msg['target'])}",
                 )
             else:
                 # False means the entity no longer exists
@@ -38,7 +38,7 @@ class STACHarvesterMessager(Messager[str]):
                 # bucket defaults to self.output_bucket
                 action = Messager.OutputFileAction(
                     file_body=None,
-                    cat_path=f"supported-datasets/{m['url'].replace(msg['source'], msg['target'])}",
+                    cat_path=f"{m['url'].replace(msg['source'], msg['target'])}",
                 )
             action_list.append(action)
 
