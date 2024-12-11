@@ -20,7 +20,6 @@ parser.add_argument("source_url", help="URL of STAC catalog or collection to har
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
 parser.add_argument("catalog", help="Path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
-parser.add_argument("files_s3_bucket", help="S3 bucket to store harvested files", type=str)
 
 
 setup_logging()
@@ -130,7 +129,7 @@ def main():
 
     stac_harvester_messager = STACHarvesterMessager(
         s3_client=s3_client,
-        output_bucket=args.files_s3_bucket,
+        output_bucket=args.metadata_s3_bucket,
         cat_output_prefix="stac-harvester/",
         producer=producer,
     )
