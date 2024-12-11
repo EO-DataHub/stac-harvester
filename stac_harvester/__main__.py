@@ -7,7 +7,7 @@ from itertools import chain
 from urllib.request import urlopen
 
 import boto3
-from botocore.exceptions import ClientError
+from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
 from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
 from pystac import Collection
 from pystac_client import Client as PystacClient
@@ -24,24 +24,6 @@ parser.add_argument("files_s3_bucket", help="S3 bucket to store harvested files"
 
 
 setup_logging()
-
-
-def upload_file_s3(body: str, bucket: str, key: str, s3_client: boto3.client):
-    """Upload data to an S3 bucket"""
-    try:
-        s3_client.put_object(Body=body, Bucket=bucket, Key=key)
-    except ClientError as e:
-        logging.error(f"File upload failed: {e}")
-
-
-def get_file_s3(bucket: str, key: str, s3_client: boto3.client) -> str:
-    """Retrieve data from an S3 bucket"""
-    try:
-        file_obj = s3_client.get_object(Bucket=bucket, Key=key)
-        return file_obj["Body"].read().decode("utf-8")
-    except ClientError as e:
-        logging.error(f"File retrieval failed: {e}")
-        return None
 
 
 def get_file_hash(url: str, retries: int = 0) -> str:
