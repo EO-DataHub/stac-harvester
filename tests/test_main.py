@@ -31,7 +31,6 @@ def parameters() -> dict:
     """Parameters used by stac harvester tests"""
     return {
         "metadata_bucket_name": "test_metadata_bucket",
-        "files_bucket_name": "test_files_bucket",
         "url": "https://test-url.co.uk/collection",
         "previously_harvested": {"https://test-url.co.uk/collection": "hash"},
     }
