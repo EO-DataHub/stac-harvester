@@ -122,10 +122,17 @@ def main():
 
     updated_urls = []
 
+    if os.getenv("TOPIC"):
+        identifier = "_" + os.getenv("TOPIC")
+    else:
+        identifier = ""
+
     pulsar_client = get_pulsar_client()
 
     producer = pulsar_client.create_producer(
-        topic="harvested", producer_name=f"stac_harvester/{args.source_url}", chunking_enabled=True
+        topic=f"harvested{identifier}",
+        producer_name=f"stac_harvester/{args.source_url}",
+        chunking_enabled=True,
     )
 
     target = generate_target(args.catalog, args.source_url)
