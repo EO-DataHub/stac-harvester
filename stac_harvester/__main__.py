@@ -130,7 +130,9 @@ def main():
     pulsar_client = get_pulsar_client()
 
     producer = pulsar_client.create_producer(
-        topic=f"harvested{identifier}", producer_name=f"stac_harvester/{args.source_url}", chunking_enabled=True
+        topic=f"harvested{identifier}",
+        producer_name=f"stac_harvester/{args.source_url}",
+        chunking_enabled=True,
     )
 
     target = generate_target(args.catalog, args.source_url)
