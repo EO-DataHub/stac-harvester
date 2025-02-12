@@ -191,7 +191,7 @@ def main():
         if len(files) >= minimum_message_entries:
             messsages["files"] = files
             logging.error("Messages")
-            logging.error(messages)
+            logging.error(messsages)
             stac_harvester_messager.consume(messsages)
             files = []
     if files:
