@@ -144,11 +144,11 @@ def main():
         producer=producer,
     )
 
-    logging.info(f"Harvesting from source URL: {args.source_url}")
+    logging.error(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
     previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key, s3_client)
-    logging.info(f"Previously harvested URLs: {previously_harvested}")
+    logging.error(f"Previously harvested URLs: {previously_harvested}")
     latest_harvested = {}
 
     url_list = find_urls(args.source_url)
@@ -158,12 +158,12 @@ def main():
 
     # Pulsar messages are sent once for every 100 entities
     for url in url_list:
-        logging.info(f"Parsing URL: {url}")
+        logging.error(f"Parsing URL: {url}")
         file_hash = get_file_hash(url)
         previous_hash = previously_harvested.pop(url, None)
         if not previous_hash or previous_hash != file_hash:
             # URL was not harvested previously or has been updated
-            logging.info("Appended URL to 'updated' list")
+            logging.error("Appended URL to 'updated' list")
             updated_urls.append(url)
             msg = {
                 "updated": True,
@@ -182,7 +182,7 @@ def main():
 
     deleted_urls = list(previously_harvested.keys())
     for url in deleted_urls:
-        logging.info(f"Previously harvested URLs not found: {deleted_urls}")
+        logging.error(f"Previously harvested URLs not found: {deleted_urls}")
         msg = {
             "updated": False,
             "url": url,
@@ -190,6 +190,8 @@ def main():
         files.append(msg)
         if len(files) >= minimum_message_entries:
             messsages["files"] = files
+            logging.error("Messages")
+            logging.error(messages)
             stac_harvester_messager.consume(messsages)
             files = []
     if files:
@@ -200,7 +202,7 @@ def main():
     upload_file_s3(
         json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
     )
-    logging.info(f"Harvested files: {latest_harvested}")
+    logging.error(f"Harvested files: {latest_harvested}")
 
 
 if __name__ == "__main__":
