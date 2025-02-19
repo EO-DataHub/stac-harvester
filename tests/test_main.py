@@ -73,7 +73,7 @@ def test_find_urls():
     mock_client.open.return_value.get_all_items.return_value = [mock_catalogue]
 
     with mock.patch("stac_harvester.__main__.PystacClient", mock_client):
-        result = stac_harvester.find_urls("https://www.this-is-a-stac-url.com")
+        result = stac_harvester.find_items("https://www.this-is-a-stac-url.com")
 
     assert len(result) == 2
     assert f"{source_url}/link_1" in result

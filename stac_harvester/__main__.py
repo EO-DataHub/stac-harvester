@@ -14,7 +14,7 @@ from pystac import Collection
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
-from .stac_harvester_messager import STACHarvesterMessager
+from stac_harvester_messager import STACHarvesterMessager
 
 parser = argparse.ArgumentParser()
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
@@ -59,7 +59,7 @@ def get_metadata(bucket: str, key: str, s3_client: boto3.client) -> dict:
     return previously_harvested
 
 
-def find_urls(source_url: str) -> set:
+def find_items(source_url: str) -> set:
     """Returns all links to URLs that are children of the given source URL"""
     urls = {source_url}
 
@@ -79,20 +79,7 @@ def find_urls(source_url: str) -> set:
                 collection = client.get_collection(collection.id)
                 all_items = chain(all_items, collection.get_items(recursive=True))
 
-    for item in all_items:
-        for link in item.links:
-            if target := link.target:
-                if link.rel in {
-                    "child",
-                    "items",
-                    "item",
-                    "self",
-                    "parent",
-                    "collection",
-                } and is_valid_url(target, source_url):
-                    urls.add(target)
-
-    return urls
+    return all_items
 
 
 def is_valid_url(url: str, source_url: str) -> bool:
@@ -151,13 +138,15 @@ def main():
     logging.error(f"Previously harvested URLs: {previously_harvested}")
     latest_harvested = {}
 
-    url_list = find_urls(args.source_url)
+    items = find_items(args.source_url)
 
     messages = {"source": args.source_url, "target": target}
     files = []
 
     # Pulsar messages are sent once for every 100 entities
-    for url in url_list:
+    for item in items:
+        url = item.get_self_href()
+
         logging.error(f"Parsing URL: {url}")
         file_hash = get_file_hash(url)
         previous_hash = previously_harvested.pop(url, None)
