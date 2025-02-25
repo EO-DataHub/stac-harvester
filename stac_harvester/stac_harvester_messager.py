@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Sequence
 
 import requests
@@ -13,36 +14,57 @@ class STACHarvesterMessager(Messager[str]):
     Then sends a catalogue harvested message via Pulsar to trigger transformer and ingester.
     """
 
-    def process_msg(self, msg: list[tuple[str, bool]]) -> Sequence[Messager.Action]:
+    def process_msg(self, msg: dict) -> Sequence[Messager.Action]:
 
         action_list = []
-        msg_files = msg["files"]
-        for m in msg_files:
-            updated = m["updated"]
-            url = m["url"]
+        harvested_data = msg["harvested_data"]
+        deleted_keys = msg["deleted_keys"]
 
-            # msg is a url to a STAC entity to be downloaded into the S3 bucket
-            if updated:
-                # True means the entity exists
-                # Retrieve data
-                stac_data = requests.get(url).json()
-                # return action to save file to S3
-                # bucket defaults to self.output_bucket
-                action = Messager.OutputFileAction(
-                    file_body=json.dumps(stac_data),
-                    cat_path=f"{m['url'].replace(msg['source'], msg['target'])}",
-                )
-            else:
-                # False means the entity no longer exists
-                # return an action to delete file from S3, using blank file_body
-                # bucket defaults to self.output_bucket
-                action = Messager.OutputFileAction(
-                    file_body=None,
-                    cat_path=f"{m['url'].replace(msg['source'], msg['target'])}",
-                )
+        for key, value in harvested_data.items():
+            # Retrieve data
+            stac_data = value
+            # return action to save file to S3
+            # bucket defaults to self.output_bucket
+
+            action = Messager.OutputFileAction(
+                file_body=json.dumps(stac_data),
+                cat_path=key,
+            )
+            action_list.append(action)
+
+        for key in deleted_keys:
+            # return action to delete file from S3
+            action = Messager.OutputFileAction(file_body=None, cat_path=key)
             action_list.append(action)
 
         return action_list
+
+        # for m in msg_files:
+        #     updated = m["updated"]
+        #     harvested_data = m["harvested_data"]
+        #
+        #     # msg is a url to a STAC entity to be downloaded into the S3 bucket
+        #     if updated:
+        #         # True means the entity exists
+        #         # Retrieve data
+        #         stac_data = requests.get(url).json()
+        #         # return action to save file to S3
+        #         # bucket defaults to self.output_bucket
+        #         action = Messager.OutputFileAction(
+        #             file_body=json.dumps(stac_data),
+        #             cat_path=f"{m['url'].replace(msg['source'], msg['target'])}",
+        #         )
+        #     else:
+        #         # False means the entity no longer exists
+        #         # return an action to delete file from S3, using blank file_body
+        #         # bucket defaults to self.output_bucket
+        #         action = Messager.OutputFileAction(
+        #             file_body=None,
+        #             cat_path=f"{m['url'].replace(msg['source'], msg['target'])}",
+        #         )
+        #     action_list.append(action)
+        #
+        # return action_list
 
     def gen_empty_catalogue_message(self, msg):
         return {
