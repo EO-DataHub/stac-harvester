@@ -5,6 +5,7 @@ import logging
 import os
 import urllib.request
 from itertools import chain
+from urllib.parse import quote
 from urllib.request import urlopen
 
 import boto3
@@ -27,6 +28,10 @@ parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested met
 setup_logging(verbosity=2)
 
 minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
+
+global parent_keys
+
+parent_keys = {}
 
 
 def get_file_contents(url: str, retries: int = 0) -> bytes:
@@ -75,7 +80,10 @@ def prepare_catalogue(source_url: str) -> tuple:
     catalogue_name = client.id
 
     try:
+        catalogue = [client.get_root()]
+        all_collections = client.get_collections()
         all_items = client.get_all_items()
+        pages = chain(catalogue, all_collections, all_items)
     except ClientTypeError:
         collection = Collection.from_file(source_url)
         is_collection = True
@@ -83,21 +91,72 @@ def prepare_catalogue(source_url: str) -> tuple:
 
         client = PystacClient.open(root_catalogue)
         all_collections = client.get_collections()
-        all_items = []
+        pages = []
         for collection in all_collections:
             self_link = [link.target for link in collection.links if link.rel == "self"][0]
             if self_link == source_url:
                 collection = client.get_collection(collection.id)
-                all_items = chain(all_items, collection.get_items(recursive=True))
+                pages = chain(pages, collection.get_items(recursive=True))
 
-    return catalogue_name, all_items, is_collection
+    return catalogue_name, pages, is_collection
 
 
-def is_valid_url(url: str, source_url: str) -> bool:
-    """Verify URL is a valid link for harvesting"""
-    if url and url.startswith(source_url) and not any(x in url for x in ["?", "thumbnail"]):
-        return True
-    return False
+def get_type(data: dict) -> str:
+    if data["type"] == "Catalog":
+        return 'catalogs'
+    elif data["type"] == "Collection":
+        return 'collections'
+    elif data["type"] == "Feature":
+        return 'items'
+    else:
+        print(f"Data type not recognised: {data['type']}")
+
+
+def get_parent_url(data: dict) -> str:
+    root_link = ''
+    self_link = ''
+    for link in data['links']:
+        if link['rel'] == 'parent':
+            return link['href']
+        elif link['rel'] == 'root':
+            root_link = link['href']
+        elif link['rel'] == 'self':
+            self_link = link['href']
+
+    return None
+
+
+def parse_url(entry_url: str) -> tuple:
+    global parent_keys
+
+    key = ''
+    entry_data_raw = get_file_contents(entry_url)
+    entry_data = json.loads(entry_data_raw.decode("utf-8"))
+    file_hash = get_file_hash(entry_data_raw)
+
+    url = entry_url
+    while url:
+        if url == entry_url:
+            data = entry_data
+        else:
+            data_raw = get_file_contents(url)
+            data = json.loads(data_raw.decode("utf-8"))
+
+        entry_type = get_type(data)
+        url = get_parent_url(data)
+
+        if parent_key := parent_keys.get(url):
+            key = parent_key + '/' + get_type(entry_data) + '/' + entry_data['id']
+            break
+
+        key = entry_type + '/' + data['id'] + '/' + key
+
+    key = key.rstrip('/')
+
+    if entry_data['type'] in ['Catalog', 'Collection']:
+        parent_keys[entry_url] = key
+
+    return key, entry_data, file_hash
 
 
 def main():
@@ -122,10 +181,7 @@ def main():
         chunking_enabled=True,
     )
 
-    target = "/"
-
-
-    messages = {"source": args.source_url, "target": target}
+    messages = {"source": args.id, "target": args.catalog}
 
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
@@ -137,7 +193,11 @@ def main():
 
     catalogue_name, items, is_collection = prepare_catalogue(args.source_url)
 
-    output_prefix = f"stac-harvester/{args.id}/"
+    if 'github.com' in args.source_url:
+        output_prefix = f"git-harvester/{quote(args.source_url)}/"
+    else:
+        output_prefix = f"stac-harvester/{args.id}/"
+
     if is_collection:
         output_prefix = f"{output_prefix}/collection"
 
@@ -153,17 +213,11 @@ def main():
         url = item.get_self_href()
 
         logging.info(f"Parsing URL: {url}")
-        data_raw = get_file_contents(url)
-        data = json.loads(data_raw.decode("utf-8"))
 
-        if data["type"] == "Catalogue":
-            key = f"{data["id"]}.json"
-        elif data["type"] == "Collection":
-            key = f"{catalogue_name}/collections/{data["id"]}.json"
-        elif data["type"] == "Feature":
-            key = f"{catalogue_name}/collections/{data["collection"]}/items/{data["id"]}.json"
+        key, data, file_hash = parse_url(url)
 
-        file_hash = get_file_hash(data_raw)
+        key = key + '.json'
+
         previous_hash = previously_harvested.pop(key, None)
         latest_harvested[key] = file_hash
 
@@ -178,7 +232,7 @@ def main():
             messages["harvested_data"] = harvested_data
             messages["deleted_keys"] = []
 
-            logging.info(f"Sending {len(harvested_data)} messages")
+            logging.info(f"Sending {len(harvested_data)} messages: {messages}")
             stac_harvester_messager.consume(messages)
             upload_file_s3(
                 json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
