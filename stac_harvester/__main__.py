@@ -113,15 +113,10 @@ def get_type(data: dict) -> str:
 
 
 def get_parent_url(data: dict) -> str:
-    root_link = ''
-    self_link = ''
+
     for link in data['links']:
         if link['rel'] == 'parent':
             return link['href']
-        elif link['rel'] == 'root':
-            root_link = link['href']
-        elif link['rel'] == 'self':
-            self_link = link['href']
 
     return None
 
@@ -181,8 +176,6 @@ def main():
         chunking_enabled=True,
     )
 
-    messages = {"source": args.id, "target": args.catalog}
-
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
@@ -200,6 +193,8 @@ def main():
 
     if is_collection:
         output_prefix = f"{output_prefix}/collection"
+
+    messages = {"source": args.id, "target": output_prefix.rstrip('/')}
 
     stac_harvester_messager = STACHarvesterMessager(
         s3_client=s3_client,
