@@ -285,9 +285,6 @@ def main():
         catalogue_name, items, is_collection = prepare_catalogue_stac(args.source_url)
         is_git = False
 
-    if is_collection:
-        output_prefix = f"{output_prefix}/collection"
-
     messages = {"source": args.source, "target": args.target}
 
     stac_harvester_messager = STACHarvesterMessager(
