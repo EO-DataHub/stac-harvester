@@ -68,6 +68,8 @@ dependencies = [
     "botocore",
     "pystac-client",
     "pystac",
+    "opentelemetry-distro",
+    "opentelemetry-exporter-otlp-proto-grpc",
     "eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@v0.1.4"
 ]
 

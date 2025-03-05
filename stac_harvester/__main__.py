@@ -3,18 +3,38 @@ import hashlib
 import json
 import logging
 import os
+import time
 import urllib.request
 from itertools import chain
 from urllib.request import urlopen
 
 import boto3
 from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
-from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
+from eodhp_utils.runner import (get_boto3_session, get_pulsar_client,
+                                setup_logging)
+from opentelemetry import metrics, trace
+from opentelemetry.propagate import inject
 from pystac import Collection
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
 from .stac_harvester_messager import STACHarvesterMessager
+
+# Setup OpenTelemetry Tracer & Meter
+tracer = trace.get_tracer(__name__)
+meter = metrics.get_meter(__name__)
+
+# Define Metrics
+harvest_duration = meter.create_histogram(
+    "harvester.run_time",
+    unit="ms",
+    description="Time taken for STAC harvesting job",
+)
+
+messages_sent_counter = meter.create_counter(
+    "harvester.messages_sent",
+    description="Total number of Pulsar messages sent",
+)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
@@ -23,7 +43,7 @@ parser.add_argument("catalog", help="Path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
 
-setup_logging()
+setup_logging(verbosity=1)
 
 minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
 
@@ -120,87 +140,113 @@ def main():
 
     args = parser.parse_args()
 
-    updated_urls = []
+    # Start Harvest Span (Tracks Whole Process)
+    start_time = time.time_ns()
+    with tracer.start_as_current_span("stac_harvester.run") as harvest_span:
+        harvest_span.set_attribute("workspace", args.workspace_name)
+        harvest_span.set_attribute("source_url", args.source_url)
 
-    if os.getenv("TOPIC"):
-        identifier = "_" + os.getenv("TOPIC")
-    else:
-        identifier = ""
+        updated_urls = []
 
-    pulsar_client = get_pulsar_client()
+        if os.getenv("TOPIC"):
+            identifier = "_" + os.getenv("TOPIC")
+        else:
+            identifier = ""
 
-    producer = pulsar_client.create_producer(
-        topic=f"harvested{identifier}",
-        producer_name=f"stac_harvester/{args.source_url}",
-        chunking_enabled=True,
-    )
+        pulsar_client = get_pulsar_client()
 
-    target = generate_target(args.catalog, args.source_url)
+        producer = pulsar_client.create_producer(
+            topic=f"harvested{identifier}",
+            producer_name=f"stac_harvester/{args.source_url}",
+            chunking_enabled=True,
+        )
 
-    stac_harvester_messager = STACHarvesterMessager(
-        s3_client=s3_client,
-        output_bucket=args.metadata_s3_bucket,
-        cat_output_prefix="stac-harvester/",
-        producer=producer,
-    )
+        target = generate_target(args.catalog, args.source_url)
 
-    logging.info(f"Harvesting from source URL: {args.source_url}")
+        stac_harvester_messager = STACHarvesterMessager(
+            s3_client=s3_client,
+            output_bucket=args.metadata_s3_bucket,
+            cat_output_prefix="stac-harvester/",
+            producer=producer,
+        )
 
-    metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
-    previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key, s3_client)
-    logging.info(f"Previously harvested URLs: {previously_harvested}")
-    latest_harvested = {}
+        logging.info(f"Harvesting from source URL: {args.source_url}")
 
-    url_list = find_urls(args.source_url)
+        metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
+        previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key, s3_client)
+        # logging.info(f"Previously harvested URLs: {previously_harvested}")
+        latest_harvested = {}
 
-    messsages = {"source": args.source_url, "target": target}
-    files = []
+        url_list = find_urls(args.source_url)
 
-    # Pulsar messages are sent once for every 100 entities
-    for url in url_list:
-        logging.info(f"Parsing URL: {url}")
-        file_hash = get_file_hash(url)
-        previous_hash = previously_harvested.pop(url, None)
-        if not previous_hash or previous_hash != file_hash:
-            # URL was not harvested previously or has been updated
-            logging.info("Appended URL to 'updated' list")
-            updated_urls.append(url)
+        messsages = {"source": args.source_url, "target": target}
+        files = []
+
+        # Pulsar messages are sent once for every 100 entities
+        for url in url_list:
+            logging.info(f"Parsing URL: {url}")
+            file_hash = get_file_hash(url)
+            previous_hash = previously_harvested.pop(url, None)
+            if not previous_hash or previous_hash != file_hash:
+                # URL was not harvested previously or has been updated
+                logging.info("Appended URL to 'updated' list")
+                updated_urls.append(url)
+                msg = {
+                    "updated": True,
+                    "url": url,
+                }
+                files.append(msg)
+            latest_harvested[url] = file_hash
+            if len(files) >= minimum_message_entries:
+                messsages["files"] = files
+                process_batch(stac_harvester_messager, messsages, harvest_span)
+                files = []
+        if len(files) >= minimum_message_entries:
+            messsages["files"] = files
+            stac_harvester_messager.consume(messsages)
+            files = []
+
+        deleted_urls = list(previously_harvested.keys())
+        for url in deleted_urls:
+            logging.info(f"Previously harvested URLs not found: {deleted_urls}")
             msg = {
-                "updated": True,
+                "updated": False,
                 "url": url,
             }
             files.append(msg)
-        latest_harvested[url] = file_hash
-        if len(files) >= minimum_message_entries:
+            if len(files) >= minimum_message_entries:
+                messsages["files"] = files
+                process_batch(stac_harvester_messager, messsages, harvest_span)
+                files = []
+        if files:
             messsages["files"] = files
-            stac_harvester_messager.consume(messsages)
-            files = []
-    if len(files) >= minimum_message_entries:
-        messsages["files"] = files
-        stac_harvester_messager.consume(messsages)
-        files = []
+            process_batch(stac_harvester_messager, messsages, harvest_span)
 
-    deleted_urls = list(previously_harvested.keys())
-    for url in deleted_urls:
-        logging.info(f"Previously harvested URLs not found: {deleted_urls}")
-        msg = {
-            "updated": False,
-            "url": url,
-        }
-        files.append(msg)
-        if len(files) >= minimum_message_entries:
-            messsages["files"] = files
-            stac_harvester_messager.consume(messsages)
-            files = []
-    if files:
-        messsages["files"] = files
-        stac_harvester_messager.consume(messsages)
+        # Record harvested hash data in S3
+        upload_file_s3(
+            json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
+        )
+        # ✅ Record Harvest Duration Metric
+        elapsed_time = (time.time_ns() - start_time) / 1e6  # Convert ns → ms
+        harvest_duration.record(elapsed_time, {"workspace": args.workspace_name})
+        logging.info(f"Harvested files: {latest_harvested}")
 
-    # Record harvested hash data in S3
-    upload_file_s3(
-        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
-    )
-    logging.info(f"Harvested files: {latest_harvested}")
+
+def process_batch(messager, messages, parent_span):
+    """📤 **Processes a batch and sends to Pulsar with tracing** 📤"""
+    with tracer.start_as_current_span("stac_harvester.process_batch", context=parent_span) as span:
+        span.set_attribute("num_files", len(messages["files"]))
+        span.set_attribute("workspace", messages["source"])
+
+        # Inject Trace Context into Message Properties
+        outgoing_properties = {}
+        inject(outgoing_properties)
+
+        # Send Message
+        messager.consume(messages)
+        messages_sent_counter.add(1, {"workspace": messages["source"]})
+
+        logging.info(f"📩 Sent Pulsar Message with {len(messages['files'])} files")
 
 
 if __name__ == "__main__":
