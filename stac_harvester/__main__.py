@@ -133,8 +133,8 @@ def prepare_catalogue_git(source_url):
             data = json.loads(data_raw.decode("utf-8"))
             data['harvester_file_name'] = file['name']
             items.append(data)
-            if data['type'] == 'Catalog':
-                catalogue_name = data['id']
+            # if data['type'] == 'Catalog':
+            #     catalogue_name = data['id']
             # if data['type'] == 'Catalog':
             #     client.id = data['id']
             #     client.description = data['description']
