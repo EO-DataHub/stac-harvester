@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import hashlib
 import json
 import logging
@@ -272,7 +273,7 @@ def main():
 
     producer = pulsar_client.create_producer(
         topic=f"harvested{identifier}",
-        producer_name=f"stac_harvester/{args.source_url}",
+        producer_name=f"stac_harvester/{args.source_url}_{datetime.datetime.now()}",
         chunking_enabled=True,
     )
 
