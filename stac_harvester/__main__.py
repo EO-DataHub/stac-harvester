@@ -277,8 +277,8 @@ def main():
     harvested_data = {}
 
     if 'github.com' in args.source_url:
-        output_prefix = f"git-harvester/{quote(args.source_url)}/"
-        catalogue_name, items, is_collection = prepare_catalogue_git(args.source_url.replace('/', '%2f'))
+        output_prefix = f"git-harvester/{quote(args.source_url).replace('/', '%2f')}/"
+        catalogue_name, items, is_collection = prepare_catalogue_git(args.source_url)
         is_git = True
     else:
         output_prefix = f"stac-harvester/{args.source}/"
