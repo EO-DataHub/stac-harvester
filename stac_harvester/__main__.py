@@ -22,7 +22,7 @@ from pystac_client.errors import ClientTypeError
 from .stac_harvester_messager import STACHarvesterMessager
 
 parser = argparse.ArgumentParser()
-parser.add_argument("id", help="Unique identifier for catalogue", type=str)
+
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
 parser.add_argument("source", help="Path of the STAC catalog", type=str)
