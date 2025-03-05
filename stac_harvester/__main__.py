@@ -81,10 +81,10 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
 
     is_collection = False
 
-    client = PystacClient.open(source_url)
-    catalogue_name = client.id
-
     try:
+        client = PystacClient.open(source_url)
+        name = client.id
+
         catalogue = [client.get_root()]
         all_collections = client.get_collections()
         all_items = client.get_all_items()
@@ -92,6 +92,8 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
     except ClientTypeError:
         collection = Collection.from_file(source_url)
         is_collection = True
+        name = collection.id
+
         root_catalogue = [link.target for link in collection.links if link.rel == "root"][0]
 
         client = PystacClient.open(root_catalogue)
@@ -103,7 +105,7 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
                 collection = client.get_collection(collection.id)
                 pages = chain(pages, collection.get_items(recursive=True))
 
-    return catalogue_name, pages, is_collection
+    return name, pages, is_collection
 
 
 def parse_github_url(github_url):
@@ -133,24 +135,12 @@ def prepare_catalogue_git(source_url):
             data = json.loads(data_raw.decode("utf-8"))
             data['harvester_file_name'] = file['name']
             items.append(data)
-            # if data['type'] == 'Catalog':
-            #     catalogue_name = data['id']
-            # if data['type'] == 'Catalog':
-            #     client.id = data['id']
-            #     client.description = data['description']
-            # else:
-            #     client.add_item(entry)
 
     else:
         logging.error(f"Error: {response.status_code}")
         response.raise_for_status()
 
     catalogue_name = client.id
-
-    # catalogue = [client.get_root()]
-    # all_collections = client.get_collections()
-    # all_items = client.get_all_items()
-    # pages = chain(catalogue, all_collections, all_items)
 
     return catalogue_name, items, False
 
@@ -288,7 +278,7 @@ def main():
 
     if 'github.com' in args.source_url:
         output_prefix = f"git-harvester/{quote(args.source_url)}/"
-        catalogue_name, items, is_collection = prepare_catalogue_git(args.source_url).replace('/', '%2f')
+        catalogue_name, items, is_collection = prepare_catalogue_git(args.source_url.replace('/', '%2f'))
         is_git = True
     else:
         output_prefix = f"stac-harvester/{args.source}/"
