@@ -25,7 +25,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("id", help="Unique identifier for catalogue", type=str)
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
 parser.add_argument("workspace_name", help="Name of the workspace", type=str)
-parser.add_argument("catalog", help="Path of the STAC catalog", type=str)
+parser.add_argument("source", help="Path of the STAC catalog", type=str)
+parser.add_argument("target", help="Updated path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
 
@@ -290,14 +291,14 @@ def main():
         catalogue_name, items, is_collection = prepare_catalogue_git(args.source_url).replace('/', '%2f')
         is_git = True
     else:
-        output_prefix = f"stac-harvester/{args.id}/"
+        output_prefix = f"stac-harvester/{args.source}/"
         catalogue_name, items, is_collection = prepare_catalogue_stac(args.source_url)
         is_git = False
 
     if is_collection:
         output_prefix = f"{output_prefix}/collection"
 
-    messages = {"source": args.id, "target": output_prefix.rstrip('/')}
+    messages = {"source": args.source, "target": args.target}
 
     stac_harvester_messager = STACHarvesterMessager(
         s3_client=s3_client,
