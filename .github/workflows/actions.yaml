@@ -49,18 +49,15 @@ jobs:
           echo $IMAGE_TAG
           echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
-  aws-ecr-build:
-    name: Build ECR image
-    needs: get-tag-name
-    uses: EO-DataHub/github-actions/.github/workflows/docker-image-to-aws-ecr.yaml@main
+  publish:
+    name: Build and push Docker image
+    needs: [get-tag-name]
+    uses: EO-DataHub/github-actions/.github/workflows/ecr-publish.yaml@main
     with:
-      image_name: stac-harvester
+      image_name: ${{ vars.IMAGE_NAME }}
       image_tag: ${{ needs.get-tag-name.outputs.image_tag }}
+      aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+      aws_ecr_alias: ${{ vars.AWS_ECR_ALIAS }}
     permissions:
       id-token: write
       contents: read
-    secrets:
-      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-      AWS_ECR: ${{ secrets.AWS_ECR }}
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-
