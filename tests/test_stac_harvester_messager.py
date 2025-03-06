@@ -2,8 +2,6 @@ import json
 from unittest import mock
 
 from eodhp_utils.messagers import Messager
-from munch import DefaultMunch
-from pytest_mock import MockerFixture
 
 from stac_harvester.stac_harvester_messager import STACHarvesterMessager
 
