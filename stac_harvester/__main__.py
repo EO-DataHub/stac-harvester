@@ -79,8 +79,6 @@ def get_metadata(bucket: str, key: str, s3_client: boto3.client) -> dict:
 def prepare_catalogue_stac(source_url: str) -> tuple:
     """Returns all links to URLs that are children of the given source URL"""
 
-    is_collection = False
-
     try:
         client = PystacClient.open(source_url)
         name = client.id
@@ -91,7 +89,6 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
         pages = chain(catalogue, all_collections, all_items)
     except ClientTypeError:
         collection = Collection.from_file(source_url)
-        is_collection = True
         name = collection.id
 
         root_catalogue = [link.target for link in collection.links if link.rel == "root"][0]
@@ -102,10 +99,11 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
         for collection in all_collections:
             self_link = [link.target for link in collection.links if link.rel == "self"][0]
             if self_link == source_url:
+                pages.append(collection)
                 collection = client.get_collection(collection.id)
                 pages = chain(pages, collection.get_items(recursive=True))
 
-    return name, pages, is_collection
+    return name, pages
 
 
 def parse_github_url(github_url):
@@ -118,14 +116,14 @@ def parse_github_url(github_url):
     return owner, repo, catalogue_name
 
 
-def prepare_catalogue_git(source_url):
+def prepare_catalogue_git(source_url: str) -> tuple:
     items = []
     owner, repo, catalogue_name = parse_github_url(source_url)
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/"
 
     response = requests.get(url)
 
-    client = PystacClient(id=catalogue_name, description="GitHub Catalogue")
+    # client = PystacClient(id=catalogue_name, description="GitHub Catalogue")
 
     if response.status_code == 200:
         files = response.json()
@@ -140,9 +138,7 @@ def prepare_catalogue_git(source_url):
         logging.error(f"Error: {response.status_code}")
         response.raise_for_status()
 
-    catalogue_name = client.id
-
-    return catalogue_name, items, False
+    return catalogue_name, items, repo
 
 
 def get_type(data: dict) -> str:
@@ -168,7 +164,7 @@ def get_parent_url(data: dict) -> str:
 def search_git_items(url, items):
     short_url = url.lstrip("/").rstrip(".json")
     for item in items:
-        if item["harvester_file_name"].rstrip(".json") == short_url:
+        if item.get("harvester_file_name", "undefined").rstrip(".json") == short_url:
             return item
 
 
@@ -177,13 +173,15 @@ def parse_url_git(item: Item, items: list) -> tuple:
     parent_keys = {}
 
     key = ""
+    url = ""
+    entry_url = None
     entry_data = item
     entry_data_raw = json.dumps(entry_data)
     file_hash = get_file_hash(entry_data_raw.encode("utf-8"))
 
-    for link in entry_data["links"]:
-        if link["rel"] == "self":
-            url = entry_url = link["href"]
+    for link in entry_data.get("links"):
+        if link.get("rel") == "self":
+            url = entry_url = link.get("href")
 
     while url:
         if url == entry_url:
@@ -206,7 +204,7 @@ def parse_url_git(item: Item, items: list) -> tuple:
     key = key.rstrip("/")
     del entry_data["harvester_file_name"]
 
-    if entry_data["type"] in ["Catalog", "Collection"]:
+    if entry_data.get("type") in ["Catalog", "Collection"] and not entry_url is None:
         parent_keys[entry_url] = key
 
     return key, entry_data, file_hash
@@ -245,6 +243,23 @@ def parse_url_stac(entry_url: str) -> tuple:
     return key, entry_data, file_hash
 
 
+def make_git_catalogue_item(catalogue_name):
+
+    catalogue = {
+        "type": "Catalog",
+        "id": catalogue_name,
+        "title": catalogue_name,
+        "description": "Harvested Git catalogue",
+        "stac_version": "1.0.0",
+        "links": [],
+        "stac_extensions": [],
+    }
+
+    catalogue["harvester_file_name"] = f"{catalogue_name}.json"
+
+    return [catalogue]
+
+
 def main():
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
@@ -278,14 +293,17 @@ def main():
     if "github.com" in args.source_url:
         simplified_url = quote(args.source_url).replace("/", "%2f")
         output_prefix = f"git-harvester/{simplified_url}/"
-        catalogue_name, items, is_collection = prepare_catalogue_git(args.source_url)
+        catalogue_name, items, repo = prepare_catalogue_git(args.source_url)
         is_git = True
         source = simplified_url
+        items = make_git_catalogue_item(repo) + items
+        key_prefix = repo
     else:
         output_prefix = f"stac-harvester/{args.source}/"
-        catalogue_name, items, is_collection = prepare_catalogue_stac(args.source_url)
+        catalogue_name, items = prepare_catalogue_stac(args.source_url)
         is_git = False
         source = args.source
+        key_prefix = ""
 
     messages = {"source": source, "target": args.target}
 
@@ -307,7 +325,12 @@ def main():
             logging.info(f"Parsing URL: {url}")
             key, data, file_hash = parse_url_stac(url)
 
-        key = key + ".json"
+        if key == "" and is_git:
+            key = key_prefix + key + ".json"
+        elif is_git:
+            key = key_prefix + "/" + key + ".json"
+        else:
+            key = key_prefix + key + ".json"
 
         previous_hash = previously_harvested.pop(key, None)
         latest_harvested[key] = file_hash
