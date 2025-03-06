@@ -4,14 +4,13 @@ import hashlib
 import json
 import logging
 import os
-
-import requests
 import urllib.request
 from itertools import chain
 from urllib.parse import quote
 from urllib.request import urlopen
 
 import boto3
+import requests
 from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
 from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
 from pystac import Collection, Item
