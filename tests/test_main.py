@@ -3,7 +3,6 @@ import os
 import sys
 import tempfile
 from unittest import mock
-from unittest.mock import MagicMock
 
 import boto3
 import moto

@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import os
-from urllib.error import HTTPError
 
 import requests
 import urllib.request
@@ -15,7 +14,7 @@ from urllib.request import urlopen
 import boto3
 from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
 from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
-from pystac import Collection, Item, read_dict
+from pystac import Collection, Item
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
@@ -204,7 +203,7 @@ def parse_url_git(item: Item, items: list) -> tuple:
     key = key.rstrip("/")
     del entry_data["harvester_file_name"]
 
-    if entry_data.get("type") in ["Catalog", "Collection"] and not entry_url is None:
+    if entry_data.get("type") in ["Catalog", "Collection"] and entry_url is not None:
         parent_keys[entry_url] = key
 
     return key, entry_data, file_hash
