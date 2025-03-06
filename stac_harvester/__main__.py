@@ -109,8 +109,8 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
 
 
 def parse_github_url(github_url):
-    split_url = github_url.split('/')
-    catalogue_name = split_url[-1].rstrip('.json')
+    split_url = github_url.split("/")
+    catalogue_name = split_url[-1].rstrip(".json")
 
     owner = split_url[3]
     repo = split_url[4]
@@ -130,10 +130,10 @@ def prepare_catalogue_git(source_url):
     if response.status_code == 200:
         files = response.json()
         for file in files:
-            data_url = file['download_url']
+            data_url = file["download_url"]
             data_raw = get_file_contents(data_url)
             data = json.loads(data_raw.decode("utf-8"))
-            data['harvester_file_name'] = file['name']
+            data["harvester_file_name"] = file["name"]
             items.append(data)
 
     else:
@@ -147,44 +147,43 @@ def prepare_catalogue_git(source_url):
 
 def get_type(data: dict) -> str:
     if data["type"] == "Catalog":
-        return 'catalogs'
+        return "catalogs"
     elif data["type"] == "Collection":
-        return 'collections'
+        return "collections"
     elif data["type"] == "Feature":
-        return 'items'
+        return "items"
     else:
         print(f"Data type not recognised: {data['type']}")
 
 
 def get_parent_url(data: dict) -> str:
 
-    for link in data['links']:
-        if link['rel'] == 'parent':
-            return link['href']
+    for link in data["links"]:
+        if link["rel"] == "parent":
+            return link["href"]
 
     return None
 
 
 def search_git_items(url, items):
-    short_url = url.lstrip('/').rstrip('.json')
+    short_url = url.lstrip("/").rstrip(".json")
     for item in items:
-        if item['harvester_file_name'].rstrip('.json') == short_url:
+        if item["harvester_file_name"].rstrip(".json") == short_url:
             return item
-
 
 
 def parse_url_git(item: Item, items: list) -> tuple:
     global parent_keys
     parent_keys = {}
 
-    key = ''
+    key = ""
     entry_data = item
     entry_data_raw = json.dumps(entry_data)
-    file_hash = get_file_hash(entry_data_raw.encode('utf-8'))
+    file_hash = get_file_hash(entry_data_raw.encode("utf-8"))
 
-    for link in entry_data['links']:
-        if link['rel'] == 'self':
-            url = entry_url = link['href']
+    for link in entry_data["links"]:
+        if link["rel"] == "self":
+            url = entry_url = link["href"]
 
     while url:
         if url == entry_url:
@@ -199,15 +198,15 @@ def parse_url_git(item: Item, items: list) -> tuple:
         url = get_parent_url(data)
 
         if parent_key := parent_keys.get(url):
-            key = parent_key + '/' + get_type(entry_data) + '/' + entry_data['id']
+            key = parent_key + "/" + get_type(entry_data) + "/" + entry_data["id"]
             break
 
-        key = entry_type + '/' + data['id'] + '/' + key
+        key = entry_type + "/" + data["id"] + "/" + key
 
-    key = key.rstrip('/')
-    del entry_data['harvester_file_name']
+    key = key.rstrip("/")
+    del entry_data["harvester_file_name"]
 
-    if entry_data['type'] in ['Catalog', 'Collection']:
+    if entry_data["type"] in ["Catalog", "Collection"]:
         parent_keys[entry_url] = key
 
     return key, entry_data, file_hash
@@ -216,7 +215,7 @@ def parse_url_git(item: Item, items: list) -> tuple:
 def parse_url_stac(entry_url: str) -> tuple:
     global parent_keys
 
-    key = ''
+    key = ""
     entry_data_raw = get_file_contents(entry_url)
     entry_data = json.loads(entry_data_raw.decode("utf-8"))
     file_hash = get_file_hash(entry_data_raw)
@@ -233,14 +232,14 @@ def parse_url_stac(entry_url: str) -> tuple:
         url = get_parent_url(data)
 
         if parent_key := parent_keys.get(url):
-            key = parent_key + '/' + get_type(entry_data) + '/' + entry_data['id']
+            key = parent_key + "/" + get_type(entry_data) + "/" + entry_data["id"]
             break
 
-        key = entry_type + '/' + data['id'] + '/' + key
+        key = entry_type + "/" + data["id"] + "/" + key
 
-    key = key.rstrip('/')
+    key = key.rstrip("/")
 
-    if entry_data['type'] in ['Catalog', 'Collection']:
+    if entry_data["type"] in ["Catalog", "Collection"]:
         parent_keys[entry_url] = key
 
     return key, entry_data, file_hash
@@ -276,16 +275,19 @@ def main():
     latest_harvested = {}
     harvested_data = {}
 
-    if 'github.com' in args.source_url:
-        output_prefix = f"git-harvester/{quote(args.source_url).replace('/', '%2f')}/"
+    if "github.com" in args.source_url:
+        simplified_url = quote(args.source_url).replace("/", "%2f")
+        output_prefix = f"git-harvester/{simplified_url}/"
         catalogue_name, items, is_collection = prepare_catalogue_git(args.source_url)
         is_git = True
+        source = simplified_url
     else:
         output_prefix = f"stac-harvester/{args.source}/"
         catalogue_name, items, is_collection = prepare_catalogue_stac(args.source_url)
         is_git = False
+        source = args.source
 
-    messages = {"source": args.source, "target": args.target}
+    messages = {"source": source, "target": args.target}
 
     stac_harvester_messager = STACHarvesterMessager(
         s3_client=s3_client,
@@ -305,7 +307,7 @@ def main():
             logging.info(f"Parsing URL: {url}")
             key, data, file_hash = parse_url_stac(url)
 
-        key = key + '.json'
+        key = key + ".json"
 
         previous_hash = previously_harvested.pop(key, None)
         latest_harvested[key] = file_hash
