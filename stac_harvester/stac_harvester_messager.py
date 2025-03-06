@@ -1,8 +1,6 @@
 import json
-import logging
 from typing import Sequence
 
-import requests
 from eodhp_utils.messagers import Messager
 
 
@@ -38,7 +36,6 @@ class STACHarvesterMessager(Messager[str]):
             action_list.append(action)
 
         return action_list
-
 
     def gen_empty_catalogue_message(self, msg):
         return {
