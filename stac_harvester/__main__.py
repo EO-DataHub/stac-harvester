@@ -38,7 +38,7 @@ parent_keys = {}
 
 
 def get_file_contents(url: str, retries: int = 0) -> bytes:
-    """Returns hash of data available at given URL"""
+    """Returns contents of file at a given URL"""
 
     if retries == 3:
         # Max number of retries
@@ -52,7 +52,7 @@ def get_file_contents(url: str, retries: int = 0) -> bytes:
     return body
 
 
-def get_file_hash(body: str) -> str:
+def get_file_hash(body: str) -> bytes:
     """Returns hash of data available at given URL"""
 
     def _md5_hash(byte_str: bytes) -> str:
@@ -121,8 +121,6 @@ def prepare_catalogue_git(source_url: str) -> tuple:
 
     response = requests.get(url)
 
-    # client = PystacClient(id=catalogue_name, description="GitHub Catalogue")
-
     if response.status_code == 200:
         files = response.json()
         for file in files:
@@ -147,14 +145,14 @@ def get_type(data: dict) -> str:
     elif data["type"] == "Feature":
         return "items"
     else:
-        print(f"Data type not recognised: {data['type']}")
+        logging.warning(f"Data type not recognised: {data['type']}")
 
 
 def get_parent_url(data: dict) -> str:
 
-    for link in data["links"]:
-        if link["rel"] == "parent":
-            return link["href"]
+    for link in data.get("links", {}):
+        if link.get("rel") == "parent":
+            return link.get("href")
 
     return None
 
