@@ -28,4 +28,4 @@ ADD stac_harvester ./stac_harvester/
 ADD pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip pip3 install -r requirements.txt .
 
-ENTRYPOINT ["opentelemetry-instrument", "--traces_exporter", "console", "--metrics_exporter", "console", "python", "-m", "stac_harvester"]
+ENTRYPOINT ["python", "-m", "stac_harvester"]
