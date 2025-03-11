@@ -13,6 +13,7 @@ import boto3
 import requests
 from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
 from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
+from opentelemetry.propagate import inject
 from pystac import Collection, Item
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
@@ -308,6 +309,8 @@ def main():
         producer=producer,
     )
 
+    outgoing_properties = {}
+    inject(outgoing_properties)
     # Pulsar messages are sent once for every 100 entities
     for item in items:
         if is_git:
@@ -341,14 +344,18 @@ def main():
             messages["deleted_keys"] = []
 
             logging.info(f"Sending {len(harvested_data)} messages: {messages}")
-            stac_harvester_messager.consume(messages)
-            upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
+            stac_harvester_messager.consume(messages, properties=outgoing_properties)
+            upload_file_s3(
+                json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
+            )
             harvested_data = {}
 
     messages["harvested_data"] = harvested_data
     messages["deleted_keys"] = []
-    stac_harvester_messager.consume(messages)
-    upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
+    stac_harvester_messager.consume(messages, properties=outgoing_properties)
+    upload_file_s3(
+        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
+    )
 
     deleted_keys = list(previously_harvested.keys())
     messages["harvested_data"] = harvested_data
@@ -356,10 +363,12 @@ def main():
     logging.info(
         f"Sending message with {len(harvested_data.keys())} entries and {len(deleted_keys)} deleted keys"
     )
-    stac_harvester_messager.consume(messages)
+    stac_harvester_messager.consume(messages, properties=outgoing_properties)
 
     # Record harvested hash data in S3
-    upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
+    upload_file_s3(
+        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
+    )
     logging.info(f"Harvested files: {latest_harvested}")
 
 

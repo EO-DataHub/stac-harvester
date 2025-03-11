@@ -69,8 +69,7 @@ dependencies = [
     "pystac-client",
     "pystac",
     "opentelemetry-distro",
-    "opentelemetry-exporter-otlp-proto-grpc",
-    "eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@v0.1.4"
+    "eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@feature/EODHP-830-fixing-invalid-links-otel"
 ]
 
 # List additional groups of dependencies here (e.g. development
