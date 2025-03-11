@@ -36,26 +36,21 @@ def parameters() -> dict:
     }
 
 
-def test_generate_target_no_slash():
-    test_catalog = "catalog"
-    test_source_url = "https://www.this-is-a-stac-url.com"
+@pytest.fixture
+def mock_catalogue_entry():
+    entry = mock.Mock()
+    entry.get_self_href.return_value = "https://test-url.co.uk/collection_new"
 
-    result = stac_harvester.generate_target(test_catalog, test_source_url)
-
-    assert result == test_catalog
-
-
-def test_generate_target_slash():
-    test_catalog = "catalog"
-    test_source_url = "https://www.this-is-a-stac-url.com/"
-
-    result = stac_harvester.generate_target(test_catalog, test_source_url)
-
-    assert result == test_catalog + "/"
+    return entry
 
 
-def test_find_urls():
-    """Test that find_urls only returns urls from valid links within a given input string"""
+@pytest.fixture
+def mock_data():
+    return {"id": "catalogue_name"}
+
+
+def test_prepare_catalogue():
+    """Test that prepare_catalogue returns a generator"""
     source_url = "https://www.this-is-a-stac-url.com"
     mock_catalogue_data = {
         "links": [
@@ -73,10 +68,9 @@ def test_find_urls():
     mock_client.open.return_value.get_all_items.return_value = [mock_catalogue]
 
     with mock.patch("stac_harvester.__main__.PystacClient", mock_client):
-        result = stac_harvester.find_urls("https://www.this-is-a-stac-url.com")
+        _, result = stac_harvester.prepare_catalogue_stac("https://www.this-is-a-stac-url.com")
 
-    assert len(result) == 2
-    assert f"{source_url}/link_1" in result
+    assert f"{source_url}/link_1" in str(list(result))
 
 
 @moto.mock_aws()
@@ -90,21 +84,27 @@ def test_main(parameters, mocker: MockerFixture):
         s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
         s3_resource = boto3.resource("s3")
 
+        mock_catalogue_entry = mock.MagicMock()
+        mock_catalogue_entry.get_self_href.return_value = "https://example.com"
+
         # Run STAC harvester
         sys.argv = [
             None,
             parameters["url"],
             "workspace-name",
             "catalog-name",
+            "catalogue_target",
             parameters["metadata_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
         mocker.patch(
-            "stac_harvester.__main__.find_urls",
-            return_value=[
-                "https://test-url.co.uk/collection",
-                "https://test-url.co.uk/collection2",
-            ],
+            "stac_harvester.__main__.prepare_catalogue_stac",
+            return_value=(
+                "catalogue_name",
+                [
+                    mock_catalogue_entry,
+                ],
+            ),
         )
 
         mock_pulsar_client = mock.MagicMock()
@@ -112,36 +112,39 @@ def test_main(parameters, mocker: MockerFixture):
         mock_pulsar_client.create_producer.return_value = mock_producer
         mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
 
-        with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
+        with (
+            mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+            mock.patch("stac_harvester.__main__.parse_url_stac") as mock_stac_data,
+        ):
+            mock_stac_data.return_value = ("key", {"file content": "data"}, "hash")
+
             mock_messager_instance = mock_messager.return_value
             mock_messager_instance.consume.return_value = None
             stac_harvester.main()
             test_msg = {
-                "files": [
-                    {"updated": True, "url": "https://test-url.co.uk/collection"},
-                    {"updated": True, "url": "https://test-url.co.uk/collection2"},
-                ],
-                "source": parameters["url"],
-                "target": "catalog-name",
+                "source": "catalog-name",
+                "target": "catalogue_target",
+                "harvested_data": {"key.json": {"file content": "data"}},
+                "deleted_keys": [],
             }
 
             # Verify messager created correctly
-            mock_messager.assert_called_once_with(
+            mock_messager.assert_called_with(
                 s3_client=mock.ANY,
                 output_bucket=parameters["metadata_bucket_name"],
-                cat_output_prefix="stac-harvester/",
+                cat_output_prefix="stac-harvester/catalog-name/",
                 producer=mock_producer,
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_once_with(test_msg)
+            mock_messager_instance.consume.assert_called_with(test_msg)
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
         assert len(s3_files) == 1
 
 
-def test_main_with_previous_run_updated(parameters, mocker: MockerFixture):
+def test_main_with_previous_run_updated(parameters, mocker: MockerFixture, mock_catalogue_entry):
     """Test that the main stac havester function produces a correct pulsar message and updates known
     metadata in S3, when given known metadata from a previous run"""
 
@@ -171,43 +174,62 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
+            "catalogue_target",
             parameters["metadata_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
-            "stac_harvester.__main__.find_urls", return_value=["https://test-url.co.uk/collection"]
+            "stac_harvester.__main__.prepare_catalogue_stac",
+            return_value=("catalogue", [mock_catalogue_entry]),
         )
         mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
         mock_pulsar_client.create_producer.return_value = mock_producer
         mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
 
-        with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
+        with (
+            mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+            mock.patch("stac_harvester.__main__.get_file_contents") as mock_file_contents,
+        ):
+
+            mock_file_contents.return_value = (
+                '{"id": "test_catalogue", "type": "Catalog", "links": []}'.encode("utf-8")
+            )
+
             mock_messager_instance = mock_messager.return_value
             mock_messager_instance.consume.return_value = None
             stac_harvester.main()
             test_msg = {
-                "files": [{"updated": True, "url": "https://test-url.co.uk/collection"}],
-                "source": parameters["url"],
-                "target": "catalog-name",
+                "source": "catalog-name",
+                "target": "catalogue_target",
+                "harvested_data": {
+                    "catalogs/test_catalogue.json": {
+                        "id": "test_catalogue",
+                        "type": "Catalog",
+                        "links": [],
+                    }
+                },
+                "deleted_keys": ["https://test-url.co.uk/collection"],
             }
             # Verify messager created correctly
-            mock_messager.assert_called_once_with(
+            mock_messager.assert_called_with(
                 s3_client=mock.ANY,
                 output_bucket=parameters["metadata_bucket_name"],
-                cat_output_prefix="stac-harvester/",
+                cat_output_prefix="stac-harvester/catalog-name/",
                 producer=mock_producer,
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_once_with(test_msg)
+            mock_messager_instance.consume.assert_called_with(test_msg)
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
         assert len(s3_files) == 1
 
 
-def test_main_with_previous_run_deleted(parameters, mocker: MockerFixture):
+def test_main_with_previous_run_deleted(
+    parameters, mocker: MockerFixture, mock_catalogue_entry, mock_data
+):
     """Test that the main stac havester function produces a correct pulsar message and updates known
     metadata in S3, when given known metadata from a previous run"""
 
@@ -237,41 +259,55 @@ def test_main_with_previous_run_deleted(parameters, mocker: MockerFixture):
             parameters["url"],
             "workspace-name",
             "catalog-name",
+            "catalog-target",
             parameters["metadata_bucket_name"],
         ]
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
-            "stac_harvester.__main__.find_urls",
-            return_value=["https://test-url.co.uk/collection_new"],
+            "stac_harvester.__main__.prepare_catalogue_stac",
+            return_value=("catalogue_name", [mock_catalogue_entry]),
         )
         mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
         mock_pulsar_client.create_producer.return_value = mock_producer
         mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
 
-        with mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager:
+        with (
+            mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+            mock.patch("stac_harvester.__main__.get_file_contents") as mock_file_contents,
+        ):
+
+            mock_file_contents.return_value = (
+                '{"id": "test_catalogue", "type": "Catalog", "links": []}'.encode("utf-8")
+            )
+
             mock_messager_instance = mock_messager.return_value
             mock_messager_instance.consume.return_value = None
             stac_harvester.main()
             test_msg = {
-                "files": [
-                    {"updated": True, "url": "https://test-url.co.uk/collection_new"},
-                    {"updated": False, "url": "https://test-url.co.uk/collection"},
-                ],
-                "source": parameters["url"],
-                "target": "catalog-name",
+                "source": "catalog-name",
+                "target": "catalog-target",
+                "harvested_data": {
+                    "catalogs/test_catalogue.json": {
+                        "id": "test_catalogue",
+                        "type": "Catalog",
+                        "links": [],
+                    }
+                },
+                "deleted_keys": ["https://test-url.co.uk/collection"],
             }
             # Verify messager created correctly
             mock_messager.assert_called_once_with(
                 s3_client=mock.ANY,
                 output_bucket=parameters["metadata_bucket_name"],
-                cat_output_prefix="stac-harvester/",
+                cat_output_prefix="stac-harvester/catalog-name/",
                 producer=mock_producer,
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_once_with(test_msg)
+            mock_messager_instance.consume.assert_called_with(test_msg)
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
+
         assert len(s3_files) == 1

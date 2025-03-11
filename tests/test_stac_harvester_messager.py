@@ -2,17 +2,11 @@ import json
 from unittest import mock
 
 from eodhp_utils.messagers import Messager
-from munch import DefaultMunch
-from pytest_mock import MockerFixture
 
 from stac_harvester.stac_harvester_messager import STACHarvesterMessager
 
 
-def test_process_msg_updated(mocker: MockerFixture):
-    mocker.patch(
-        "stac_harvester.stac_harvester_messager.requests.get",
-        return_value=DefaultMunch(json=lambda: {"type": "Feature", "id": "test-item"}),
-    )
+def test_process_msg_updated():
 
     mock_s3_client = mock.MagicMock()
     mock_producer = mock.MagicMock()
@@ -25,12 +19,10 @@ def test_process_msg_updated(mocker: MockerFixture):
     )
 
     test_msg = {
-        "files": [
-            {
-                "updated": True,
-                "url": "https://test-url-to-catalog/collections/collection/items/item",
-            }
-        ],
+        "harvested_data": {
+            "test-catalog/collections/collection/items/item": {"type": "Feature", "id": "test-item"}
+        },
+        "deleted_keys": [],
         "source": "https://test-url-to-catalog",
         "target": "test-catalog",
     }
@@ -45,9 +37,7 @@ def test_process_msg_updated(mocker: MockerFixture):
     assert result == [expected_action]
 
 
-def test_process_msg_deleted(mocker: MockerFixture):
-    mocker.patch("stac_harvester.stac_harvester_messager.requests.get", return_value=None)
-
+def test_process_msg_deleted():
     mock_s3_client = mock.MagicMock()
     mock_producer = mock.MagicMock()
 
@@ -59,12 +49,8 @@ def test_process_msg_deleted(mocker: MockerFixture):
     )
 
     test_msg = {
-        "files": [
-            {
-                "updated": False,
-                "url": "https://test-url-to-catalog/collections/collection/items/item",
-            }
-        ],
+        "harvested_data": {},
+        "deleted_keys": ["test-catalog/collections/collection/items/item"],
         "source": "https://test-url-to-catalog",
         "target": "test-catalog",
     }
@@ -79,11 +65,7 @@ def test_process_msg_deleted(mocker: MockerFixture):
     assert result == [expected_action]
 
 
-def test_process_msg_update_and_delete(mocker: MockerFixture):
-    mocker.patch(
-        "stac_harvester.stac_harvester_messager.requests.get",
-        side_effect=[DefaultMunch(json=lambda: {"type": "Feature", "id": "test-item"}), None],
-    )
+def test_process_msg_update_and_delete():
 
     mock_s3_client = mock.MagicMock()
     mock_producer = mock.MagicMock()
@@ -96,16 +78,13 @@ def test_process_msg_update_and_delete(mocker: MockerFixture):
     )
 
     test_msg = {
-        "files": [
-            {
-                "updated": True,
-                "url": "https://test-url-to-catalog/collections/collection/items/item1",
-            },
-            {
-                "updated": False,
-                "url": "https://test-url-to-catalog/collections/collection/items/item2",
-            },
-        ],
+        "harvested_data": {
+            "test-catalog/collections/collection/items/item1": {
+                "type": "Feature",
+                "id": "test-item",
+            }
+        },
+        "deleted_keys": ["test-catalog/collections/collection/items/item2"],
         "source": "https://test-url-to-catalog",
         "target": "test-catalog",
     }

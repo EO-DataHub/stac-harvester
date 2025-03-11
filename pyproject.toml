@@ -93,7 +93,8 @@ dev = [
     "moto~=5.0.5",
     "munch~=4.0.0",
     "isort",
-    "pre-commit"
+    "pre-commit",
+    "requests-mock",
 ]
 
 # List URLs that are relevant to your project
