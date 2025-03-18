@@ -1,14 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim-bullseye
 
-# Set environment variables for OpenTelemetry
-ENV OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
-ENV OTEL_SERVICE_NAME=stac-harvester
-ENV OTEL_TRACES_EXPORTER=console
-ENV OTEL_METRICS_EXPORTER=console
-ENV OTEL_LOGS_EXPORTER=console
-ENV OTEL_LOG_LEVEL=debug
-
 RUN rm -f /etc/apt/apt.conf.d/docker-clean; \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 

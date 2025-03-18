@@ -48,22 +48,22 @@ jsonschema-specifications==2024.10.1
     # via jsonschema
 opentelemetry-api==1.30.0
     # via
-    #   opentelemetry-distro
-    #   opentelemetry-instrumentation
+    #   STAC-Harvester (pyproject.toml)
+    #   eodhp-utils
+    #   opentelemetry-processor-baggage
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-distro==0.51b0
-    # via STAC-Harvester (pyproject.toml)
-opentelemetry-instrumentation==0.51b0
-    # via opentelemetry-distro
-opentelemetry-sdk==1.30.0
-    # via opentelemetry-distro
-opentelemetry-semantic-conventions==0.51b0
+opentelemetry-processor-baggage==0.52b0
     # via
-    #   opentelemetry-instrumentation
-    #   opentelemetry-sdk
-packaging==24.2
-    # via opentelemetry-instrumentation
+    #   STAC-Harvester (pyproject.toml)
+    #   eodhp-utils
+opentelemetry-sdk==1.30.0
+    # via
+    #   STAC-Harvester (pyproject.toml)
+    #   eodhp-utils
+    #   opentelemetry-processor-baggage
+opentelemetry-semantic-conventions==0.51b0
+    # via opentelemetry-sdk
 pulsar-client==3.6.1
     # via eodhp-utils
 pystac[validation]==1.12.2
@@ -104,6 +104,6 @@ urllib3==2.3.0
 wrapt==1.17.2
     # via
     #   deprecated
-    #   opentelemetry-instrumentation
+    #   opentelemetry-processor-baggage
 zipp==3.21.0
     # via importlib-metadata

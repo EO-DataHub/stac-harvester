@@ -90,25 +90,26 @@ nodeenv==1.9.1
     # via pre-commit
 opentelemetry-api==1.30.0
     # via
-    #   opentelemetry-distro
-    #   opentelemetry-instrumentation
+    #   STAC-Harvester (pyproject.toml)
+    #   eodhp-utils
+    #   opentelemetry-processor-baggage
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-distro==0.51b0
-    # via STAC-Harvester (pyproject.toml)
-opentelemetry-instrumentation==0.51b0
-    # via opentelemetry-distro
-opentelemetry-sdk==1.30.0
-    # via opentelemetry-distro
-opentelemetry-semantic-conventions==0.51b0
+opentelemetry-processor-baggage==0.52b0
     # via
-    #   opentelemetry-instrumentation
-    #   opentelemetry-sdk
+    #   STAC-Harvester (pyproject.toml)
+    #   eodhp-utils
+opentelemetry-sdk==1.30.0
+    # via
+    #   STAC-Harvester (pyproject.toml)
+    #   eodhp-utils
+    #   opentelemetry-processor-baggage
+opentelemetry-semantic-conventions==0.51b0
+    # via opentelemetry-sdk
 packaging==24.2
     # via
     #   black
     #   build
-    #   opentelemetry-instrumentation
     #   pytest
 pathspec==0.12.1
     # via black
@@ -203,7 +204,7 @@ wheel==0.45.1
 wrapt==1.17.2
     # via
     #   deprecated
-    #   opentelemetry-instrumentation
+    #   opentelemetry-processor-baggage
 xmltodict==0.14.2
     # via moto
 zipp==3.21.0

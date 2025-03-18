@@ -15,15 +15,16 @@ from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
 from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
 from opentelemetry import trace
 from opentelemetry.baggage import set_baggage
+from opentelemetry.context import attach, detach
+from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
 from opentelemetry.propagate import inject
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 from pystac import Collection, Item
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
 from .stac_harvester_messager import STACHarvesterMessager
-
-# Initialize OpenTelemetry tracer
-tracer = trace.get_tracer(__name__)
 
 parser = argparse.ArgumentParser()
 
@@ -34,13 +35,23 @@ parser.add_argument("target", help="Updated path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
 
-setup_logging(verbosity=3)
+setup_logging(verbosity=1)
 
 minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
 
 global parent_keys
 
 parent_keys = {}
+
+# Create and set a new tracer provider
+trace.set_tracer_provider(TracerProvider())
+# Add the BaggageSpanProcessor so that baggage entries are copied as span attributes
+trace.get_tracer_provider().add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
+# Use SimpleSpanProcessor for immediate export to the console
+trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+
+
+tracer = trace.get_tracer(__name__)
 
 
 def get_file_contents(url: str, retries: int = 0) -> bytes:
@@ -269,10 +280,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Set OpenTelemetry Baggage (persists across logs and child spans)
-    set_baggage("workspace", args.workspace_name)
-    set_baggage("source_url", args.source_url)
-
     if os.getenv("TOPIC"):
         identifier = "_" + os.getenv("TOPIC")
     else:
@@ -317,21 +324,21 @@ def main():
         cat_output_prefix=output_prefix,
         producer=producer,
     )
-
+    token_workspace = attach(set_baggage("workspace", args.workspace_name))
+    token_source = attach(set_baggage("source_url", args.source_url))
     # Start OpenTelemetry trace (ensures logs have trace context)
     with tracer.start_as_current_span("stac_harvester.run"):
         # Pulsar messages are sent once for every 100 entities
         for item in items:
-            outgoing_properties = {}  # Create a new dictionary for each message
-            inject(outgoing_properties)  # Ensure latest trace context is included
-
+            outgoing_properties = {}
+            inject(outgoing_properties)
             if is_git:
-                logging.info(f"Parsing item: {item['harvester_file_name']}")
+                # logging.info(f"Parsing item: {item['harvester_file_name']}")
                 key, data, file_hash = parse_url_git(item, items)
             else:
                 url = item.get_self_href()
 
-                logging.info(f"Parsing URL: {url}")
+                # logging.info(f"Parsing URL: {url}")
                 key, data, file_hash = parse_url_stac(url)
 
             if key == "" and is_git:
@@ -355,8 +362,8 @@ def main():
                 messages["harvested_data"] = harvested_data
                 messages["deleted_keys"] = []
 
-                logging.info(f"Sending {len(harvested_data)} messages: {messages}")
-                stac_harvester_messager.consume(messages, properties=outgoing_properties)
+                # logging.info(f"Sending {len(harvested_data)} messages: {messages}")
+                stac_harvester_messager.consume(messages)
                 upload_file_s3(
                     json.dumps(latest_harvested),
                     args.metadata_s3_bucket,
@@ -367,7 +374,7 @@ def main():
 
         messages["harvested_data"] = harvested_data
         messages["deleted_keys"] = []
-        stac_harvester_messager.consume(messages, properties=outgoing_properties)
+        stac_harvester_messager.consume(messages)
         upload_file_s3(
             json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
         )
@@ -378,13 +385,16 @@ def main():
         logging.info(
             f"Sending message with {len(harvested_data.keys())} entries and {len(deleted_keys)} deleted keys"
         )
-        stac_harvester_messager.consume(messages, properties=outgoing_properties)
+        stac_harvester_messager.consume(messages)
 
         # Record harvested hash data in S3
         upload_file_s3(
             json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
         )
         logging.info(f"Harvested files: {latest_harvested}")
+
+    detach(token_source)
+    detach(token_workspace)
 
 
 if __name__ == "__main__":
