@@ -17,7 +17,6 @@ from opentelemetry import trace
 from opentelemetry.baggage import set_baggage
 from opentelemetry.context import attach, detach
 from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
-from opentelemetry.propagate import inject
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 from pystac import Collection, Item
@@ -34,7 +33,6 @@ parser.add_argument("source", help="Path of the STAC catalog", type=str)
 parser.add_argument("target", help="Updated path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
-
 setup_logging(verbosity=1)
 
 minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
@@ -43,13 +41,17 @@ global parent_keys
 
 parent_keys = {}
 
-# Create and set a new tracer provider
-trace.set_tracer_provider(TracerProvider())
-# Add the BaggageSpanProcessor so that baggage entries are copied as span attributes
-trace.get_tracer_provider().add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
-# Use SimpleSpanProcessor for immediate export to the console
-trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
-
+# --- Tracer Provider Setup ---
+current_provider = trace.get_tracer_provider()
+if not isinstance(current_provider, TracerProvider):
+    provider = TracerProvider()
+    provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
+    provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    trace.set_tracer_provider(provider)
+else:
+    provider = current_provider
+    # add baggage processor
+    provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
 
 tracer = trace.get_tracer(__name__)
 
@@ -280,6 +282,9 @@ def main():
 
     args = parser.parse_args()
 
+    token_workspace = attach(set_baggage("workspace", args.workspace_name))
+    token_source = attach(set_baggage("source_url", args.source_url))
+
     if os.getenv("TOPIC"):
         identifier = "_" + os.getenv("TOPIC")
     else:
@@ -324,14 +329,10 @@ def main():
         cat_output_prefix=output_prefix,
         producer=producer,
     )
-    token_workspace = attach(set_baggage("workspace", args.workspace_name))
-    token_source = attach(set_baggage("source_url", args.source_url))
     # Start OpenTelemetry trace (ensures logs have trace context)
     with tracer.start_as_current_span("stac_harvester.run"):
         # Pulsar messages are sent once for every 100 entities
         for item in items:
-            outgoing_properties = {}
-            inject(outgoing_properties)
             if is_git:
                 # logging.info(f"Parsing item: {item['harvester_file_name']}")
                 key, data, file_hash = parse_url_git(item, items)
@@ -382,9 +383,6 @@ def main():
         deleted_keys = list(previously_harvested.keys())
         messages["harvested_data"] = harvested_data
         messages["deleted_keys"] = deleted_keys
-        logging.info(
-            f"Sending message with {len(harvested_data.keys())} entries and {len(deleted_keys)} deleted keys"
-        )
         stac_harvester_messager.consume(messages)
 
         # Record harvested hash data in S3
