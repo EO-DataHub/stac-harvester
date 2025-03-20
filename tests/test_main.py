@@ -137,7 +137,7 @@ def test_main(parameters, mocker: MockerFixture):
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_with(test_msg, properties={})
+            mock_messager_instance.consume.assert_called_with(test_msg)
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
@@ -219,7 +219,7 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture, mock_
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_with(test_msg, properties={})
+            mock_messager_instance.consume.assert_called_with(test_msg)
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
@@ -303,7 +303,7 @@ def test_main_with_previous_run_deleted(
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_with(test_msg, properties={})
+            mock_messager_instance.consume.assert_called_with(test_msg)
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
