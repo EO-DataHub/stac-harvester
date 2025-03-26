@@ -93,7 +93,7 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
 
         client = PystacClient.open(root_catalogue)
         all_collections = client.get_collections()
-        pages = []
+        pages = [client.get_root()]
         for collection in all_collections:
             self_link = [link.target for link in collection.links if link.rel == "self"][0]
             if self_link == source_url:
