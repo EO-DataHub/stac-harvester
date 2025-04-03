@@ -191,7 +191,6 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture, mock_
             mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
             mock.patch("stac_harvester.__main__.get_file_contents") as mock_file_contents,
         ):
-
             mock_file_contents.return_value = (
                 '{"id": "test_catalogue", "type": "Catalog", "links": []}'.encode("utf-8")
             )
@@ -276,7 +275,6 @@ def test_main_with_previous_run_deleted(
             mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
             mock.patch("stac_harvester.__main__.get_file_contents") as mock_file_contents,
         ):
-
             mock_file_contents.return_value = (
                 '{"id": "test_catalogue", "type": "Catalog", "links": []}'.encode("utf-8")
             )

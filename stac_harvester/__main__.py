@@ -13,6 +13,9 @@ import boto3
 import requests
 from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
 from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
+from opentelemetry import trace
+from opentelemetry.baggage import set_baggage
+from opentelemetry.context import attach, detach
 from pystac import Collection, Item
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
@@ -27,14 +30,15 @@ parser.add_argument("source", help="Path of the STAC catalog", type=str)
 parser.add_argument("target", help="Updated path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
-
-setup_logging(verbosity=2)
+setup_logging(verbosity=1, enable_otel_logging=True)
 
 minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
 
 global parent_keys
 
 parent_keys = {}
+
+tracer = trace.get_tracer(__name__)
 
 
 def get_file_contents(url: str, retries: int = 0) -> bytes:
@@ -149,7 +153,6 @@ def get_type(data: dict) -> str:
 
 
 def get_parent_url(data: dict) -> str:
-
     for link in data.get("links", {}):
         if link.get("rel") == "parent":
             return link.get("href")
@@ -240,7 +243,6 @@ def parse_url_stac(entry_url: str) -> tuple:
 
 
 def make_git_catalogue_item(catalogue_name):
-
     catalogue = {
         "type": "Catalog",
         "id": catalogue_name,
@@ -264,6 +266,9 @@ def main():
     s3_client = get_boto3_session().client("s3")
 
     args = parser.parse_args()
+
+    token_workspace = attach(set_baggage("workspace", args.workspace_name))
+    token_source = attach(set_baggage("source_url", args.source_url))
 
     if os.getenv("TOPIC"):
         identifier = "_" + os.getenv("TOPIC")
@@ -309,66 +314,70 @@ def main():
         cat_output_prefix=output_prefix,
         producer=producer,
     )
+    # Start OpenTelemetry trace (ensures logs have trace context)
+    with tracer.start_as_current_span("stac_harvester.run"):
+        # Pulsar messages are sent once for every 100 entities
+        for item in items:
+            if is_git:
+                # logging.info(f"Parsing item: {item['harvester_file_name']}")
+                key, data, file_hash = parse_url_git(item, items)
+            else:
+                url = item.get_self_href()
 
-    # Pulsar messages are sent once for every 100 entities
-    for item in items:
-        if is_git:
-            logging.info(f"Parsing item: {item['harvester_file_name']}")
-            key, data, file_hash = parse_url_git(item, items)
-        else:
-            url = item.get_self_href()
+                # logging.info(f"Parsing URL: {url}")
+                key, data, file_hash = parse_url_stac(url)
 
-            logging.info(f"Parsing URL: {url}")
-            key, data, file_hash = parse_url_stac(url)
+            if key == "" and is_git:
+                key = key_prefix + key + ".json"
+            elif is_git:
+                key = key_prefix + "/" + key + ".json"
+            else:
+                key = key_prefix + key + ".json"
 
-        if key == "" and is_git:
-            key = key_prefix + key + ".json"
-        elif is_git:
-            key = key_prefix + "/" + key + ".json"
-        else:
-            key = key_prefix + key + ".json"
+            previous_hash = previously_harvested.pop(key, None)
+            latest_harvested[key] = file_hash
 
-        previous_hash = previously_harvested.pop(key, None)
-        latest_harvested[key] = file_hash
+            if not previous_hash or previous_hash != file_hash:
+                # Data was not harvested previously
+                logging.info(f"Added: {key}")
+                harvested_data[key] = data
+            else:
+                logging.info(f"Skipping: {key}")
 
-        if not previous_hash or previous_hash != file_hash:
-            # Data was not harvested previously
-            logging.info(f"Added: {key}")
-            harvested_data[key] = data
-        else:
-            logging.info(f"Skipping: {key}")
+            if len(harvested_data) >= minimum_message_entries:
+                messages["harvested_data"] = harvested_data
+                messages["deleted_keys"] = []
 
-        if len(harvested_data) >= minimum_message_entries:
-            messages["harvested_data"] = harvested_data
-            messages["deleted_keys"] = []
+                # logging.info(f"Sending {len(harvested_data)} messages: {messages}")
+                stac_harvester_messager.consume(messages)
+                upload_file_s3(
+                    json.dumps(latest_harvested),
+                    args.metadata_s3_bucket,
+                    metadata_s3_key,
+                    s3_client,
+                )
+                harvested_data = {}
 
-            logging.info(f"Sending {len(harvested_data)} messages: {messages}")
-            stac_harvester_messager.consume(messages)
-            upload_file_s3(
-                json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
-            )
-            harvested_data = {}
+        messages["harvested_data"] = harvested_data
+        messages["deleted_keys"] = []
+        stac_harvester_messager.consume(messages)
+        upload_file_s3(
+            json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
+        )
 
-    messages["harvested_data"] = harvested_data
-    messages["deleted_keys"] = []
-    stac_harvester_messager.consume(messages)
-    upload_file_s3(
-        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
-    )
+        deleted_keys = list(previously_harvested.keys())
+        messages["harvested_data"] = harvested_data
+        messages["deleted_keys"] = deleted_keys
+        stac_harvester_messager.consume(messages)
 
-    deleted_keys = list(previously_harvested.keys())
-    messages["harvested_data"] = harvested_data
-    messages["deleted_keys"] = deleted_keys
-    logging.info(
-        f"Sending message with {len(harvested_data.keys())} entries and {len(deleted_keys)} deleted keys"
-    )
-    stac_harvester_messager.consume(messages)
+        # Record harvested hash data in S3
+        upload_file_s3(
+            json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
+        )
+        logging.info(f"Harvested files: {latest_harvested}")
 
-    # Record harvested hash data in S3
-    upload_file_s3(
-        json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
-    )
-    logging.info(f"Harvested files: {latest_harvested}")
+    detach(token_source)
+    detach(token_workspace)
 
 
 if __name__ == "__main__":

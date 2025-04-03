@@ -68,7 +68,11 @@ dependencies = [
     "botocore",
     "pystac-client",
     "pystac",
-    "eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@v0.1.4"
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-processor-baggage",
+    "opentelemetry-instrumentation-logging",
+    "eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@feature/EODHP-830-fixing-invalid-links-otel"
 ]
 
 # List additional groups of dependencies here (e.g. development
