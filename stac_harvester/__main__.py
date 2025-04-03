@@ -16,9 +16,6 @@ from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_loggi
 from opentelemetry import trace
 from opentelemetry.baggage import set_baggage
 from opentelemetry.context import attach, detach
-from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 from pystac import Collection, Item
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
@@ -40,18 +37,6 @@ minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
 global parent_keys
 
 parent_keys = {}
-
-# --- Tracer Provider Setup ---
-current_provider = trace.get_tracer_provider()
-if not isinstance(current_provider, TracerProvider):
-    provider = TracerProvider()
-    provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
-    provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
-    trace.set_tracer_provider(provider)
-else:
-    provider = current_provider
-    # add baggage processor
-    provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
 
 tracer = trace.get_tracer(__name__)
 
