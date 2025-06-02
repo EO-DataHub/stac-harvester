@@ -15,13 +15,13 @@ on:
 jobs:
   pre-commit-preparation:
     name: Pre-commit
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
 
       - name: Copy config
-        permissions:
-          contents: read
         run: |
           if [ ! -f .pre-commit-config.yaml ]; then
             curl -o .pre-commit-config.yaml https://raw.githubusercontent.com/EO-DataHub/github-actions/main/.pre-commit-config-python.yaml
