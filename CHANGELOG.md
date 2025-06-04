@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.9 (26-03-2025)
+
+- Add top level harvest for collections
+
+## v0.1.8 (07-03-2025)
+
+- Change path format
+- Send paths to transformer instead of files
+
+## v0.1.7 (10-02-2025)
+
+- Topic can be updated with environment variables
+
+## v0.1.6 (16-12-2024)
+
+- Refactor actions
+- Refactor to use eodhp-utils
+
 ## v0.1.5 (11-10-2024)
 
 - Add chunking to pulsar messages
