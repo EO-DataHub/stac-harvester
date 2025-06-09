@@ -131,7 +131,7 @@ Tests use [pytest](https://docs.pytest.org/), [moto](https://github.com/spulec/m
 
 - **Authentication errors:** Ensure your `AWS_ACCESS_KEY` and `AWS_SECRET_ACCESS_KEY` are set correctly and have permission to access the required S3 buckets.
 - **Pulsar connection issues:** Check that `PULSAR_URL` is set to the correct broker address and is reachable from your environment.
-- **S3 upload or download failures:** Verify that `S3_BUCKET` (and any other relevant buckets like `PATCH_BUCKET` or `S3_SPDX_BUCKET`) exist, your credentials have the correct permissions, and the bucket region matches your configuration.
+- **S3 upload or download failures:** Verify that any relevant buckets exist, your credentials have the correct permissions, and the bucket region matches your configuration.
 
 Check the application logs for detailed error messages.
 
