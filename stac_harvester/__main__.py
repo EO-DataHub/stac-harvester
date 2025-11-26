@@ -22,6 +22,11 @@ from pystac_client.errors import ClientTypeError
 
 from .stac_harvester_messager import STACHarvesterMessager
 
+
+class HarvesterFetchError(Exception):
+    pass
+
+
 parser = argparse.ArgumentParser()
 
 parser.add_argument("source_url", help="URL of STAC catalog or collection to harvest", type=str)
@@ -45,8 +50,7 @@ def get_file_contents(url: str, retries: int = 0) -> bytes:
     """Returns contents of file at a given URL"""
 
     if retries == 3:
-        # Max number of retries
-        return None
+        raise HarvesterFetchError(f"Failed to fetch {url} after 3 retries")
     try:
         with urlopen(url, timeout=5) as response:
             body = response.read()
@@ -318,45 +322,49 @@ def main():
     with tracer.start_as_current_span("stac_harvester.run"):
         # Pulsar messages are sent once for every 100 entities
         for item in items:
-            if is_git:
-                # logging.info(f"Parsing item: {item['harvester_file_name']}")
-                key, data, file_hash = parse_url_git(item, items)
-            else:
-                url = item.get_self_href()
+            try:
+                if is_git:
+                    # logging.info(f"Parsing item: {item['harvester_file_name']}")
+                    key, data, file_hash = parse_url_git(item, items)
+                else:
+                    url = item.get_self_href()
 
-                # logging.info(f"Parsing URL: {url}")
-                key, data, file_hash = parse_url_stac(url)
+                    # logging.info(f"Parsing URL: {url}")
+                    key, data, file_hash = parse_url_stac(url)
 
-            if key == "" and is_git:
-                key = key_prefix + key + ".json"
-            elif is_git:
-                key = key_prefix + "/" + key + ".json"
-            else:
-                key = key_prefix + key + ".json"
+                if key == "" and is_git:
+                    key = key_prefix + key + ".json"
+                elif is_git:
+                    key = key_prefix + "/" + key + ".json"
+                else:
+                    key = key_prefix + key + ".json"
 
-            previous_hash = previously_harvested.pop(key, None)
-            latest_harvested[key] = file_hash
+                previous_hash = previously_harvested.pop(key, None)
+                latest_harvested[key] = file_hash
 
-            if not previous_hash or previous_hash != file_hash:
-                # Data was not harvested previously
-                logging.info(f"Added: {key}")
-                harvested_data[key] = data
-            else:
-                logging.info(f"Skipping: {key}")
+                if not previous_hash or previous_hash != file_hash:
+                    # Data was not harvested previously
+                    logging.info(f"Added: {key}")
+                    harvested_data[key] = data
+                else:
+                    logging.info(f"Skipping: {key}")
 
-            if len(harvested_data) >= minimum_message_entries:
-                messages["harvested_data"] = harvested_data
-                messages["deleted_keys"] = []
+                if len(harvested_data) >= minimum_message_entries:
+                    messages["harvested_data"] = harvested_data
+                    messages["deleted_keys"] = []
 
-                # logging.info(f"Sending {len(harvested_data)} messages: {messages}")
-                stac_harvester_messager.consume(messages)
-                upload_file_s3(
-                    json.dumps(latest_harvested),
-                    args.metadata_s3_bucket,
-                    metadata_s3_key,
-                    s3_client,
-                )
-                harvested_data = {}
+                    # logging.info(f"Sending {len(harvested_data)} messages: {messages}")
+                    stac_harvester_messager.consume(messages)
+                    upload_file_s3(
+                        json.dumps(latest_harvested),
+                        args.metadata_s3_bucket,
+                        metadata_s3_key,
+                        s3_client,
+                    )
+                    harvested_data = {}
+            except HarvesterFetchError as e:
+                logging.error(f"Skipping item due to fetch failure: {e}")
+                continue
 
         messages["harvested_data"] = harvested_data
         messages["deleted_keys"] = []
