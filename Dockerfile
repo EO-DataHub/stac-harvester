@@ -34,4 +34,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-dev
 
-ENTRYPOINT ["uv", "run", "--no-dev", "python", "-m", "stac_harvester"]
+ENTRYPOINT ["uv", "run", "--no-project", "python", "-m", "stac_harvester"]
