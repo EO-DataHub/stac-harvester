@@ -35,4 +35,4 @@ lint: ruff black isort validate-pyproject
 	curl -o .pre-commit-config.yaml https://raw.githubusercontent.com/EO-DataHub/github-actions/main/.pre-commit-config-python.yaml
 
 setup: .git/hooks/pre-commit
-	uv sync
+	uv sync --frozen
