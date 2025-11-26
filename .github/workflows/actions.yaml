@@ -39,7 +39,7 @@ jobs:
     name: Run unit tests
     permissions:
       contents: read
-    uses: EO-DataHub/github-actions/.github/workflows/unit-tests-python.yaml@main
+    uses: EO-DataHub/github-actions/.github/workflows/unit-tests-python-uv.yaml@main
     with:
       PYTHON_VERSION: "3.12"
 

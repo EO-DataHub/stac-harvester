@@ -5,7 +5,7 @@ description = "Harvest upstream STAC catalogs"
 readme = "README.md"
 
 # Our target version is Python 3.11, but it may work with earlier versions.
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 
 license = {file = "LICENSE"}
 
@@ -59,17 +59,8 @@ dependencies = [
     "eodhp-utils @ git+https://github.com/UKEODHP/eodhp-utils@feature/EODHP-830-fixing-invalid-links-otel"
 ]
 
-# List additional groups of dependencies here (e.g. development
-# dependencies). Users will be able to install these using the "extras"
-# syntax, for example:
-#
-#   $ pip install sampleproject[dev]
-#
-# Similar to `dependencies` above, these must be valid existing
-# projects.
-[project.optional-dependencies] # Optional
+[dependency-groups]
 dev = [
-    "pip-tools~=7.4.1",
     "pytest~=8.1.1",
     "pytest-xdist~=3.5.0",
     "pytest-mock~=3.14.0",
@@ -154,3 +145,6 @@ disable = '''
     too-many-instance-attributes,
     logging-fstring-interpolation,
 '''
+
+[tool.uv.sources]
+eodhp-utils = { git = "https://github.com/UKEODHP/eodhp-utils", rev = "feature/EODHP-830-fixing-invalid-links-otel" }

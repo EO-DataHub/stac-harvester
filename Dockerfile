@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+FROM ghcr.io/astral-sh/uv:0.9.12 AS uv
 FROM python:3.12-slim-bullseye
 
 RUN rm -f /etc/apt/apt.conf.d/docker-clean; \
@@ -7,17 +8,30 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean; \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update -y && apt-get upgrade -y \
-    && apt-get install --yes --quiet git 
-RUN apt-get update && apt-get install -y curl
-RUN curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
-RUN chmod +x ./kubectl
-RUN mv ./kubectl /usr/local/bin/kubectl
+    && apt-get install --yes --quiet git curl build-essential
 
+RUN curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x ./kubectl \
+    && mv ./kubectl /usr/local/bin/kubectl
+
+# Install uv
+COPY --from=uv /uv /uvx /bin/
 
 WORKDIR /stac_harvester
-ADD LICENSE requirements.txt ./
-ADD stac_harvester ./stac_harvester/
-ADD pyproject.toml ./
-RUN --mount=type=cache,target=/root/.cache/pip pip3 install -r requirements.txt .
 
-ENTRYPOINT ["python", "-m", "stac_harvester"]
+# Install dependencies
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-dev --no-install-project
+
+# Copy application code
+ADD LICENSE stac_harvester ./stac_harvester/
+
+# Install the project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-dev
+
+ENTRYPOINT ["uv", "run", "--no-dev", "python", "-m", "stac_harvester"]

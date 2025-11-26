@@ -6,6 +6,10 @@
 
 - Skip non-fetchable items
 
+### Changed
+
+- Migrate Python package management to uv
+
 ## v0.1.9 (26-03-2025)
 
 - Add top level harvest for collections
