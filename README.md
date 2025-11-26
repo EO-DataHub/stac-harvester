@@ -14,15 +14,20 @@ A command line tool to harvest upstream STAC catalogs. This has the following re
 
 ## Getting Started
 
-### Install via makefile
+### Prerequisites
+
+Install `uv` by following the instructions at:
+https://docs.astral.sh/uv/getting-started/installation/
+
+### Setup
+
+Run the setup command to install dependencies and configure the development environment:
 
 ```commandline
 make setup
 ```
 
-This will create a virtual environment called `venv`, build `requirements.txt` and
-`requirements-dev.txt` from `pyproject.toml` if they're out of date, install the Python
-and Node dependencies and install `pre-commit`.
+This will install all dependencies and set up `pre-commit` hooks.
 
 It's safe and fast to run `make setup` repeatedly as it will only update these things if
 they have changed.
@@ -30,27 +35,6 @@ they have changed.
 After `make setup` you can run `pre-commit` to run pre-commit checks on staged changes and
 `pre-commit run --all-files` to run them on all files. This replicates the linter checks that
 run from GitHub actions.
-
-
-### Alternative installation
-
-1. Follow the instructions [here](https://github.com/UKEODHP/template-python/blob/main/README.md) for installing a 
-Python 3.11 environment.
-2. Install dependencies:
-
-```commandline
-pip3 install -r requirements.txt
-```
-3. Set up environment variables
-```commandline
-export PULSAR_URL=<pulsar_url>
-export AWS_ACCESS_KEY=<aws_access_key>
-export AWS_SECRET_ACCESS_KEY=<aws_secret_access_key>
-```
-4. Run the service
-```commandline
-python -m stac_harvester <output_url>
-```
 
 
 ## Configuration
@@ -62,6 +46,9 @@ STAC Harvesters are configured through environment variables
 
 - `MINIMUM_MESSAGE_ENTRIES`: Minimum number of STAC entries to send per message 
 - `TOPIC`: Topic suffix for pulsar messages
+- `PULSAR_URL`
+- `AWS_ACCESS_KEY`
+- `AWS_SECRET_ACCESS_KEY`
 
 ## Pulsar Messages
 ### Outgoing Pulsar Messages (`harvested` topic)
@@ -93,7 +80,7 @@ The service is typically run as part of a data pipeline, but you can invoke it d
 Run the STAC Harvester from the command line:
 
 ```sh
-./venv/bin/python -m __main__.py https://example_source_url.com workspace_name source_folder target_folder s3_bucket
+uv run python -m __main__.py https://example_source_url.com workspace_name source_folder target_folder s3_bucket
 ```
 
 ## Development
@@ -111,8 +98,6 @@ Useful Makefile targets:
 - `make test`: Run tests continuously.
 - `make testonce`: Run tests once.
 - `make lint`: Run all linters and formatters.
-- `make requirements`: Update requirements files from `pyproject.toml`.
-- `make requirements-update`: Update to the latest allowed versions.
 - `make dockerbuild`: Build a Docker image.
 - `make dockerpush`: Push a Docker image.
 
