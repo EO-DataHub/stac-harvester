@@ -4,19 +4,20 @@ import hashlib
 import json
 import logging
 import os
-import urllib.request
+import urllib.error
 from itertools import chain
+from typing import Any
 from urllib.parse import quote
 from urllib.request import urlopen
 
-import boto3
 import requests
+from botocore.client import BaseClient
 from eodhp_utils.aws.s3 import get_file_s3, upload_file_s3
 from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_logging
 from opentelemetry import trace
 from opentelemetry.baggage import set_baggage
 from opentelemetry.context import attach, detach
-from pystac import Collection, Item
+from pystac import Collection
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
@@ -41,7 +42,7 @@ minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
 
 global parent_keys
 
-parent_keys = {}
+parent_keys: dict[str, str] = {}
 
 tracer = trace.get_tracer(__name__)
 
@@ -60,7 +61,7 @@ def get_file_contents(url: str, retries: int = 0) -> bytes:
     return body
 
 
-def get_file_hash(body: str) -> bytes:
+def get_file_hash(body: bytes) -> str:
     """Returns hash of data available at given URL"""
 
     def _md5_hash(byte_str: bytes) -> str:
@@ -72,7 +73,7 @@ def get_file_hash(body: str) -> bytes:
     return _md5_hash(body)
 
 
-def get_metadata(bucket: str, key: str, s3_client: boto3.client) -> dict:
+def get_metadata(bucket: str, key: str, s3_client: BaseClient) -> dict[str, Any]:
     """Read file at given S3 location and parse as JSON"""
     previously_harvested = get_file_s3(bucket, key, s3_client)
     try:
@@ -82,7 +83,7 @@ def get_metadata(bucket: str, key: str, s3_client: boto3.client) -> dict:
     return previously_harvested
 
 
-def prepare_catalogue_stac(source_url: str) -> tuple:
+def prepare_catalogue_stac(source_url: str) -> tuple[str, Any]:
     """Returns all links to URLs that are children of the given source URL"""
 
     try:
@@ -92,27 +93,30 @@ def prepare_catalogue_stac(source_url: str) -> tuple:
         catalogue = [client.get_root()]
         all_collections = client.get_collections()
         all_items = client.get_all_items()
-        pages = chain(catalogue, all_collections, all_items)
+        pages: Any = chain(catalogue, all_collections, all_items)
     except ClientTypeError:
         collection = Collection.from_file(source_url)
         name = collection.id
 
-        root_catalogue = [link.target for link in collection.links if link.rel == "root"][0]
+        root_catalogue = next(link.target for link in collection.links if link.rel == "root")
 
-        client = PystacClient.open(root_catalogue)
+        client = PystacClient.open(str(root_catalogue))
         all_collections = client.get_collections()
-        pages = [client.get_root()]
+        pages_list: list[Any] = [client.get_root()]
         for collection in all_collections:
-            self_link = [link.target for link in collection.links if link.rel == "self"][0]
+            self_link = next(link.target for link in collection.links if link.rel == "self")
             if self_link == source_url:
-                pages.append(collection)
+                pages_list.append(collection)
                 collection = client.get_collection(collection.id)
-                pages = chain(pages, collection.get_items(recursive=True))
+                pages = chain(pages_list, collection.get_items(recursive=True))
+                break
+        else:
+            pages = pages_list
 
     return name, pages
 
 
-def parse_github_url(github_url):
+def parse_github_url(github_url: str) -> tuple[str, str, str]:
     split_url = github_url.split("/")
     catalogue_name = split_url[-1].rstrip(".json")
 
@@ -122,8 +126,8 @@ def parse_github_url(github_url):
     return owner, repo, catalogue_name
 
 
-def prepare_catalogue_git(source_url: str) -> tuple:
-    items = []
+def prepare_catalogue_git(source_url: str) -> tuple[str, list[dict[str, Any]], str]:
+    items: list[dict[str, Any]] = []
     owner, repo, catalogue_name = parse_github_url(source_url)
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/"
 
@@ -145,7 +149,7 @@ def prepare_catalogue_git(source_url: str) -> tuple:
     return catalogue_name, items, repo
 
 
-def get_type(data: dict) -> str:
+def get_type(data: dict[str, Any]) -> str:
     if data["type"] == "Catalog":
         return "catalogs"
     elif data["type"] == "Collection":
@@ -154,9 +158,10 @@ def get_type(data: dict) -> str:
         return "items"
     else:
         logging.warning(f"Data type not recognised: {data['type']}")
+        return ""
 
 
-def get_parent_url(data: dict) -> str:
+def get_parent_url(data: dict[str, Any]) -> str | None:
     for link in data.get("links", {}):
         if link.get("rel") == "parent":
             return link.get("href")
@@ -164,31 +169,32 @@ def get_parent_url(data: dict) -> str:
     return None
 
 
-def search_git_items(url, items):
+def search_git_items(url: str, items: list[dict[str, Any]]) -> dict[str, Any] | None:
     short_url = url.lstrip("/").rstrip(".json")
     for item in items:
         if item.get("harvester_file_name", "undefined").rstrip(".json") == short_url:
             return item
+    return None
 
 
-def parse_url_git(item: Item, items: list) -> tuple:
+def parse_url_git(item: dict[str, Any], items: list[dict[str, Any]]) -> tuple[str, Any, str]:
     global parent_keys
     parent_keys = {}
 
     key = ""
     url = ""
-    entry_url = None
+    entry_url: str | None = None
     entry_data = item
     entry_data_raw = json.dumps(entry_data)
     file_hash = get_file_hash(entry_data_raw.encode("utf-8"))
 
-    for link in entry_data.get("links"):
+    for link in entry_data.get("links", []):
         if link.get("rel") == "self":
             url = entry_url = link.get("href")
 
     while url:
         if url == entry_url:
-            data = entry_data
+            data: dict[str, Any] | None = entry_data
         else:
             data = search_git_items(url, items)
 
@@ -198,7 +204,7 @@ def parse_url_git(item: Item, items: list) -> tuple:
         entry_type = get_type(data)
         url = get_parent_url(data)
 
-        if parent_key := parent_keys.get(url):
+        if url and (parent_key := parent_keys.get(url)):
             key = parent_key + "/" + get_type(entry_data) + "/" + entry_data["id"]
             break
 
@@ -213,7 +219,7 @@ def parse_url_git(item: Item, items: list) -> tuple:
     return key, entry_data, file_hash
 
 
-def parse_url_stac(entry_url: str) -> tuple:
+def parse_url_stac(entry_url: str) -> tuple[str, dict[str, Any], str]:
     global parent_keys
 
     key = ""
@@ -221,7 +227,7 @@ def parse_url_stac(entry_url: str) -> tuple:
     entry_data = json.loads(entry_data_raw.decode("utf-8"))
     file_hash = get_file_hash(entry_data_raw)
 
-    url = entry_url
+    url: str | None = entry_url
     while url:
         if url == entry_url:
             data = entry_data
@@ -232,7 +238,7 @@ def parse_url_stac(entry_url: str) -> tuple:
         entry_type = get_type(data)
         url = get_parent_url(data)
 
-        if parent_key := parent_keys.get(url):
+        if url and (parent_key := parent_keys.get(url)):
             key = parent_key + "/" + get_type(entry_data) + "/" + entry_data["id"]
             break
 
@@ -246,8 +252,8 @@ def parse_url_stac(entry_url: str) -> tuple:
     return key, entry_data, file_hash
 
 
-def make_git_catalogue_item(catalogue_name):
-    catalogue = {
+def make_git_catalogue_item(catalogue_name: str) -> list[dict[str, Any]]:
+    catalogue: dict[str, Any] = {
         "type": "Catalog",
         "id": catalogue_name,
         "title": catalogue_name,
@@ -262,7 +268,7 @@ def make_git_catalogue_item(catalogue_name):
     return [catalogue]
 
 
-def main():
+def main() -> None:
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
     harvested"""
@@ -274,8 +280,9 @@ def main():
     token_workspace = attach(set_baggage("workspace", args.workspace_name))
     token_source = attach(set_baggage("source_url", args.source_url))
 
-    if os.getenv("TOPIC"):
-        identifier = "_" + os.getenv("TOPIC")
+    topic = os.getenv("TOPIC")
+    if topic:
+        identifier = "_" + topic
     else:
         identifier = ""
 
@@ -292,25 +299,26 @@ def main():
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
     previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key, s3_client)
     logging.info(f"Previously harvested URLs: {previously_harvested}")
-    latest_harvested = {}
-    harvested_data = {}
+    latest_harvested: dict[str, Any] = {}
+    harvested_data: dict[str, Any] = {}
 
+    items: Any
     if "github.com" in args.source_url:
         simplified_url = quote(args.source_url).replace("/", "%2f")
         output_prefix = f"git-harvester/{simplified_url}/"
-        catalogue_name, items, repo = prepare_catalogue_git(args.source_url)
+        _catalogue_name, items, repo = prepare_catalogue_git(args.source_url)
         is_git = True
         source = simplified_url
         items = make_git_catalogue_item(repo) + items
         key_prefix = repo
     else:
         output_prefix = f"stac-harvester/{args.source}/"
-        catalogue_name, items = prepare_catalogue_stac(args.source_url)
+        _catalogue_name, items = prepare_catalogue_stac(args.source_url)
         is_git = False
         source = args.source
         key_prefix = ""
 
-    messages = {"source": source, "target": args.target}
+    messages: dict[str, Any] = {"source": source, "target": args.target}
 
     stac_harvester_messager = STACHarvesterMessager(
         s3_client=s3_client,
@@ -369,9 +377,7 @@ def main():
         messages["harvested_data"] = harvested_data
         messages["deleted_keys"] = []
         stac_harvester_messager.consume(messages)
-        upload_file_s3(
-            json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
-        )
+        upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
 
         deleted_keys = list(previously_harvested.keys())
         messages["harvested_data"] = harvested_data
@@ -379,9 +385,7 @@ def main():
         stac_harvester_messager.consume(messages)
 
         # Record harvested hash data in S3
-        upload_file_s3(
-            json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client
-        )
+        upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
         logging.info(f"Harvested files: {latest_harvested}")
 
     detach(token_source)

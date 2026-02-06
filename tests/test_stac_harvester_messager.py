@@ -1,4 +1,5 @@
 import json
+from typing import cast
 from unittest import mock
 
 from eodhp_utils.messagers import Messager
@@ -6,8 +7,7 @@ from eodhp_utils.messagers import Messager
 from stac_harvester.stac_harvester_messager import STACHarvesterMessager
 
 
-def test_process_msg_updated():
-
+def test_process_msg_updated() -> None:
     mock_s3_client = mock.MagicMock()
     mock_producer = mock.MagicMock()
 
@@ -19,9 +19,7 @@ def test_process_msg_updated():
     )
 
     test_msg = {
-        "harvested_data": {
-            "test-catalog/collections/collection/items/item": {"type": "Feature", "id": "test-item"}
-        },
+        "harvested_data": {"test-catalog/collections/collection/items/item": {"type": "Feature", "id": "test-item"}},
         "deleted_keys": [],
         "source": "https://test-url-to-catalog",
         "target": "test-catalog",
@@ -37,7 +35,7 @@ def test_process_msg_updated():
     assert result == [expected_action]
 
 
-def test_process_msg_deleted():
+def test_process_msg_deleted() -> None:
     mock_s3_client = mock.MagicMock()
     mock_producer = mock.MagicMock()
 
@@ -56,7 +54,7 @@ def test_process_msg_deleted():
     }
 
     expected_action = Messager.OutputFileAction(
-        file_body=None,
+        file_body=cast(str, None),
         cat_path="test-catalog/collections/collection/items/item",
     )
 
@@ -65,8 +63,7 @@ def test_process_msg_deleted():
     assert result == [expected_action]
 
 
-def test_process_msg_update_and_delete():
-
+def test_process_msg_update_and_delete() -> None:
     mock_s3_client = mock.MagicMock()
     mock_producer = mock.MagicMock()
 
@@ -95,7 +92,7 @@ def test_process_msg_update_and_delete():
     )
 
     expected_action_2 = Messager.OutputFileAction(
-        file_body=None,
+        file_body=cast(str, None),
         cat_path="test-catalog/collections/collection/items/item2",
     )
 
@@ -104,8 +101,7 @@ def test_process_msg_update_and_delete():
     assert result == [expected_action_1, expected_action_2]
 
 
-def test_gen_empty_catalogue_message():
-
+def test_gen_empty_catalogue_message() -> None:
     mock_s3_client = mock.MagicMock()
     mock_producer = mock.MagicMock()
 

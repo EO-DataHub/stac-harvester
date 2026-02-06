@@ -2,6 +2,8 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Generator
+from typing import Any
 from unittest import mock
 
 import boto3
@@ -15,7 +17,7 @@ import stac_harvester.__main__ as stac_harvester
 
 
 @pytest.fixture(autouse=True)
-def setenvvar(monkeypatch):
+def setenvvar(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     with mock.patch.dict(os.environ, clear=True):
         envvars = {
             "PULSAR_URL": "https://mock.com",
@@ -27,7 +29,7 @@ def setenvvar(monkeypatch):
 
 
 @pytest.fixture
-def parameters() -> dict:
+def parameters() -> dict[str, Any]:
     """Parameters used by stac harvester tests"""
     return {
         "metadata_bucket_name": "test_metadata_bucket",
@@ -37,7 +39,7 @@ def parameters() -> dict:
 
 
 @pytest.fixture
-def mock_catalogue_entry():
+def mock_catalogue_entry() -> mock.Mock:
     entry = mock.Mock()
     entry.get_self_href.return_value = "https://test-url.co.uk/collection_new"
 
@@ -45,11 +47,11 @@ def mock_catalogue_entry():
 
 
 @pytest.fixture
-def mock_data():
+def mock_data() -> dict[str, str]:
     return {"id": "catalogue_name"}
 
 
-def test_prepare_catalogue():
+def test_prepare_catalogue() -> None:
     """Test that prepare_catalogue returns a generator"""
     source_url = "https://www.this-is-a-stac-url.com"
     mock_catalogue_data = {
@@ -74,7 +76,7 @@ def test_prepare_catalogue():
 
 
 @moto.mock_aws()
-def test_main(parameters, mocker: MockerFixture):
+def test_main(parameters: dict[str, Any], mocker: MockerFixture) -> None:
     """Test that the main stac havester function produces a correct pulsar message and updates
     known metadata in S3"""
 
@@ -82,7 +84,7 @@ def test_main(parameters, mocker: MockerFixture):
         # Create S3 resources
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
-        s3_resource = boto3.resource("s3")
+        s3_resource: Any = boto3.resource("s3")
 
         mock_catalogue_entry = mock.MagicMock()
         mock_catalogue_entry.get_self_href.return_value = "https://example.com"
@@ -144,7 +146,9 @@ def test_main(parameters, mocker: MockerFixture):
         assert len(s3_files) == 1
 
 
-def test_main_with_previous_run_updated(parameters, mocker: MockerFixture, mock_catalogue_entry):
+def test_main_with_previous_run_updated(
+    parameters: dict[str, Any], mocker: MockerFixture, mock_catalogue_entry: mock.Mock
+) -> None:
     """Test that the main stac havester function produces a correct pulsar message and updates known
     metadata in S3, when given known metadata from a previous run"""
 
@@ -161,7 +165,7 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture, mock_
         # Create S3 resources and upload file to S3
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
-        s3_resource = boto3.resource("s3")
+        s3_resource: Any = boto3.resource("s3")
         s3.upload_file(
             local_file_path,
             parameters["metadata_bucket_name"],
@@ -191,9 +195,7 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture, mock_
             mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
             mock.patch("stac_harvester.__main__.get_file_contents") as mock_file_contents,
         ):
-            mock_file_contents.return_value = (
-                '{"id": "test_catalogue", "type": "Catalog", "links": []}'.encode("utf-8")
-            )
+            mock_file_contents.return_value = b'{"id": "test_catalogue", "type": "Catalog", "links": []}'
 
             mock_messager_instance = mock_messager.return_value
             mock_messager_instance.consume.return_value = None
@@ -227,8 +229,11 @@ def test_main_with_previous_run_updated(parameters, mocker: MockerFixture, mock_
 
 
 def test_main_with_previous_run_deleted(
-    parameters, mocker: MockerFixture, mock_catalogue_entry, mock_data
-):
+    parameters: dict[str, Any],
+    mocker: MockerFixture,
+    mock_catalogue_entry: mock.Mock,
+    mock_data: dict[str, str],
+) -> None:
     """Test that the main stac havester function produces a correct pulsar message and updates known
     metadata in S3, when given known metadata from a previous run"""
 
@@ -245,7 +250,7 @@ def test_main_with_previous_run_deleted(
         # Create S3 resources and upload file to S3
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
-        s3_resource = boto3.resource("s3")
+        s3_resource: Any = boto3.resource("s3")
         s3.upload_file(
             local_file_path,
             parameters["metadata_bucket_name"],
@@ -275,9 +280,7 @@ def test_main_with_previous_run_deleted(
             mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
             mock.patch("stac_harvester.__main__.get_file_contents") as mock_file_contents,
         ):
-            mock_file_contents.return_value = (
-                '{"id": "test_catalogue", "type": "Catalog", "links": []}'.encode("utf-8")
-            )
+            mock_file_contents.return_value = b'{"id": "test_catalogue", "type": "Catalog", "links": []}'
 
             mock_messager_instance = mock_messager.return_value
             mock_messager_instance.consume.return_value = None
