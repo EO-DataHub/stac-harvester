@@ -27,7 +27,6 @@ htmlcov
 Makefile
 .pre-commit-config.yaml
 CHANGELOG.md
-README.md
 
 # IDE and editor files
 .vscode
