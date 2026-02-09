@@ -1,0 +1,59 @@
+# Git and version control
+.git
+.gitignore
+
+# Virtual environments
+.venv
+
+# Python cache and bytecode
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+*.egg-info
+*.egg
+
+# Testing
+tests
+.pytest_cache
+.coverage
+.coverage.*
+htmlcov
+.tox
+.nox
+.hypothesis
+
+# Development tools and docs
+Makefile
+.pre-commit-config.yaml
+CHANGELOG.md
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build
+dist
+*.whl
+*.tar.gz
+
+# Linting and type checking caches
+.ruff_cache
+.mypy_cache
+.dmypy.json
+
+# Misc
+*.bak
+.cache
+
+# Docker files
+Dockerfile
+.dockerignore

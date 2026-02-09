@@ -1,10 +1,11 @@
 import json
-from typing import Sequence
+from collections.abc import Sequence
+from typing import Any, cast
 
 from eodhp_utils.messagers import Messager
 
 
-class STACHarvesterMessager(Messager[str]):
+class STACHarvesterMessager(Messager[dict[str, Any]]):
     """
     Loads STAC Catalogue harvested files into an S3 bucket with file key relating to the
     owning catalog combined with the file path in the external catalogue.
@@ -12,9 +13,8 @@ class STACHarvesterMessager(Messager[str]):
     Then sends a catalogue harvested message via Pulsar to trigger transformer and ingester.
     """
 
-    def process_msg(self, msg: dict) -> Sequence[Messager.Action]:
-
-        action_list = []
+    def process_msg(self, msg: dict[str, Any]) -> Sequence[Messager.Action]:
+        action_list: list[Messager.Action] = []
         harvested_data = msg["harvested_data"]
         deleted_keys = msg["deleted_keys"]
 
@@ -32,12 +32,13 @@ class STACHarvesterMessager(Messager[str]):
 
         for key in deleted_keys:
             # return action to delete file from S3
-            action = Messager.OutputFileAction(file_body=None, cat_path=key)
+            # file_body=None signals deletion; upstream type annotation is str but None is expected
+            action = Messager.OutputFileAction(file_body=cast(str, None), cat_path=key)
             action_list.append(action)
 
         return action_list
 
-    def gen_empty_catalogue_message(self, msg):
+    def gen_empty_catalogue_message(self, msg: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": f"stac-harvester/{msg['source']}",
             "workspace": "default_workspace",
