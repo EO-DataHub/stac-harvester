@@ -1,10 +1,16 @@
 # Changelog
 
-## v0.1.11 (03-03-2025)
+## v0.1.12 (03-03-2025)
 
 ### Fixed
 
 - Catch all per-item exceptions in harvest loop
+
+## v0.1.11 (09-02-2025)
+
+### Changed
+
+- Use reusable QA GitHub Action
 
 ## v0.1.10 (26-11-2025)
 
