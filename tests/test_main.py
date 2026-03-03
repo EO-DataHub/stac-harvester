@@ -1,3 +1,4 @@
+import http.client
 import json
 import os
 import sys
@@ -312,3 +313,63 @@ def test_main_with_previous_run_deleted(
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
 
         assert len(s3_files) == 1
+
+
+@moto.mock_aws()
+def test_main_skips_bad_item_and_continues(parameters: dict[str, Any], mocker: MockerFixture) -> None:
+    """Test that a per-item exception (e.g. InvalidURL) is caught and the loop continues
+    to process subsequent items."""
+    with moto.mock_aws():
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+
+        # Two mock items: first will cause parse_url_stac to raise, second succeeds
+        bad_item = mock.MagicMock()
+        bad_item.get_self_href.return_value = "https://example.com/bad item"
+
+        good_item = mock.MagicMock()
+        good_item.get_self_href.return_value = "https://example.com/good-item"
+
+        sys.argv = [
+            None,
+            parameters["url"],
+            "workspace-name",
+            "catalog-name",
+            "catalogue_target",
+            parameters["metadata_bucket_name"],
+        ]
+        mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
+        mocker.patch(
+            "stac_harvester.__main__.prepare_catalogue_stac",
+            return_value=("catalogue_name", [bad_item, good_item]),
+        )
+
+        mock_pulsar_client = mock.MagicMock()
+        mock_producer = mock.MagicMock()
+        mock_pulsar_client.create_producer.return_value = mock_producer
+        mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
+
+        with (
+            mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+            mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
+        ):
+
+            def parse_side_effect(url: str) -> tuple[str, dict[str, Any], str]:
+                if "bad" in url:
+                    raise http.client.InvalidURL(f"URL contains illegal character: {url!r}")
+                return ("good-key", {"file content": "good data"}, "hash")
+
+            mock_parse.side_effect = parse_side_effect
+
+            mock_messager_instance = mock_messager.return_value
+            mock_messager_instance.consume.return_value = None
+
+            stac_harvester.main()
+
+            # The good item should appear in the harvested data
+            final_call_args = mock_messager_instance.consume.call_args[0][0]
+            assert "good-key.json" in final_call_args["harvested_data"]
+            assert final_call_args["harvested_data"]["good-key.json"] == {"file content": "good data"}
+
+            # consume was called, proving the harvest completed
+            assert mock_messager_instance.consume.called

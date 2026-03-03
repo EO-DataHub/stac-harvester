@@ -17,7 +17,7 @@ from eodhp_utils.runner import get_boto3_session, get_pulsar_client, setup_loggi
 from opentelemetry import trace
 from opentelemetry.baggage import set_baggage
 from opentelemetry.context import attach, detach
-from pystac import Collection
+from pystac import Collection, Item
 from pystac_client import Client as PystacClient
 from pystac_client.errors import ClientTypeError
 
@@ -268,6 +268,16 @@ def make_git_catalogue_item(catalogue_name: str) -> list[dict[str, Any]]:
     return [catalogue]
 
 
+def get_item_id(item: Item | dict[str, Any]) -> str:
+    try:
+        if isinstance(item, dict):
+            return item.get("harvester_file_name", "<unknown>")
+        else:
+            return item.get_self_href() or "<unknown>"
+    except Exception:
+        return "<unknown>"
+
+
 def main() -> None:
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
@@ -371,7 +381,12 @@ def main() -> None:
                     )
                     harvested_data = {}
             except HarvesterFetchError as e:
-                logging.error(f"Skipping item due to fetch failure: {e}")
+                item_id = get_item_id(item)
+                logging.error(f"Skipping item {item_id} due to fetch failure: {e}")
+                continue
+            except Exception:
+                item_id = get_item_id(item)
+                logging.exception(f"Skipping item {item_id} due to unexpected error")
                 continue
 
         messages["harvested_data"] = harvested_data
