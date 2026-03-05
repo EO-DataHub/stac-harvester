@@ -90,7 +90,7 @@ def _create_stac_client(url: str) -> PystacClient:
     retry = Retry(
         total=5,
         backoff_factor=1,
-        status_forcelist=[502, 503, 504],
+        status_forcelist=[429, 502, 503, 504],
         allowed_methods=None,
     )
     stac_io = StacApiIO(max_retries=retry)
@@ -353,6 +353,7 @@ def main() -> None:
     # Start OpenTelemetry trace (ensures logs have trace context)
     with tracer.start_as_current_span("stac_harvester.run"):
         # Pulsar messages are sent once for every 100 entities
+        iterator_failed = False
         try:
             for item in items:
                 try:
@@ -403,7 +404,8 @@ def main() -> None:
                     item_id = get_item_id(item)
                     logging.exception(f"Skipping item {item_id} due to unexpected error")
                     continue
-        except Exception:
+        except (ConnectionError, OSError):
+            iterator_failed = True
             logging.exception("Iterator failed during pagination. Flushing harvested data.")
 
         messages["harvested_data"] = harvested_data
@@ -411,10 +413,11 @@ def main() -> None:
         stac_harvester_messager.consume(messages)
         upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
 
-        deleted_keys = list(previously_harvested.keys())
-        messages["harvested_data"] = harvested_data
-        messages["deleted_keys"] = deleted_keys
-        stac_harvester_messager.consume(messages)
+        if not iterator_failed:
+            deleted_keys = list(previously_harvested.keys())
+            messages["harvested_data"] = harvested_data
+            messages["deleted_keys"] = deleted_keys
+            stac_harvester_messager.consume(messages)
 
         # Record harvested hash data in S3
         upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)

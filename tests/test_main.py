@@ -393,6 +393,7 @@ def test_create_stac_client_has_post_retry() -> None:
         assert retry_arg.backoff_factor == 1
         assert 502 in retry_arg.status_forcelist
         assert 503 in retry_arg.status_forcelist
+        assert 429 in retry_arg.status_forcelist
         assert 504 in retry_arg.status_forcelist
 
         # Verify PystacClient.open was called with the StacApiIO instance
@@ -402,50 +403,55 @@ def test_create_stac_client_has_post_retry() -> None:
 @moto.mock_aws()
 def test_main_flushes_on_iterator_failure(parameters: dict[str, Any], mocker: MockerFixture) -> None:
     """Test that when the iterator itself raises (e.g. connection abort during pagination),
-    already-harvested data is still flushed."""
-    with moto.mock_aws():
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+    already-harvested data is still flushed and no items are reported as deleted."""
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
 
-        good_item = mock.MagicMock()
-        good_item.get_self_href.return_value = "https://example.com/good-item"
+    good_item = mock.MagicMock()
+    good_item.get_self_href.return_value = "https://example.com/good-item"
 
-        def failing_iterator() -> Generator[mock.MagicMock]:
-            yield good_item
-            raise ConnectionError("Remote end closed connection without response")
+    def failing_iterator() -> Generator[mock.MagicMock]:
+        yield good_item
+        raise ConnectionError("Remote end closed connection without response")
 
-        sys.argv = [
-            None,
-            parameters["url"],
-            "workspace-name",
-            "catalog-name",
-            "catalogue_target",
-            parameters["metadata_bucket_name"],
-        ]
-        mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
-        mocker.patch(
-            "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue_name", failing_iterator()),
-        )
+    sys.argv = [
+        None,
+        parameters["url"],
+        "workspace-name",
+        "catalog-name",
+        "catalogue_target",
+        parameters["metadata_bucket_name"],
+    ]
+    mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
+    mocker.patch(
+        "stac_harvester.__main__.prepare_catalogue_stac",
+        return_value=("catalogue_name", failing_iterator()),
+    )
 
-        mock_pulsar_client = mock.MagicMock()
-        mock_producer = mock.MagicMock()
-        mock_pulsar_client.create_producer.return_value = mock_producer
-        mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
+    mock_pulsar_client = mock.MagicMock()
+    mock_producer = mock.MagicMock()
+    mock_pulsar_client.create_producer.return_value = mock_producer
+    mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
 
-        with (
-            mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
-            mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
-        ):
-            mock_parse.return_value = ("good-key", {"file content": "good data"}, "hash")
-            mock_messager_instance = mock_messager.return_value
-            mock_messager_instance.consume.return_value = None
+    with (
+        mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+        mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
+    ):
+        mock_parse.return_value = ("good-key", {"file content": "good data"}, "hash")
+        mock_messager_instance = mock_messager.return_value
+        mock_messager_instance.consume.return_value = None
 
-            stac_harvester.main()
+        stac_harvester.main()
 
-            # The good item harvested before the failure should still be flushed
-            consume_calls = mock_messager_instance.consume.call_args_list
-            all_harvested = {}
-            for call in consume_calls:
-                all_harvested.update(call[0][0].get("harvested_data", {}))
-            assert "good-key.json" in all_harvested
+        # The good item harvested before the failure should still be flushed
+        consume_calls = mock_messager_instance.consume.call_args_list
+        all_harvested = {}
+        for call in consume_calls:
+            all_harvested.update(call[0][0].get("harvested_data", {}))
+        assert "good-key.json" in all_harvested
+
+        # No items should be reported as deleted when iterator fails
+        all_deleted = []
+        for call in consume_calls:
+            all_deleted.extend(call[0][0].get("deleted_keys", []))
+        assert all_deleted == [], f"Expected no deletions on iterator failure, got: {all_deleted}"
