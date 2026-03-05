@@ -13,6 +13,7 @@ import pytest
 from botocore.client import BaseClient
 from munch import DefaultMunch
 from pytest_mock import MockerFixture
+from urllib3.util.retry import Retry
 
 import stac_harvester.__main__ as stac_harvester
 
@@ -373,3 +374,78 @@ def test_main_skips_bad_item_and_continues(parameters: dict[str, Any], mocker: M
 
             # consume was called, proving the harvest completed
             assert mock_messager_instance.consume.called
+
+
+def test_create_stac_client_has_post_retry() -> None:
+    """Test that _create_stac_client configures retry with POST support."""
+    with (
+        mock.patch("stac_harvester.__main__.PystacClient") as mock_pystac,
+        mock.patch("stac_harvester.__main__.StacApiIO") as mock_stac_io,
+    ):
+        stac_harvester._create_stac_client("https://example.com")
+
+        # Verify StacApiIO was called with a Retry that allows all methods
+        mock_stac_io.assert_called_once()
+        retry_arg = mock_stac_io.call_args[1]["max_retries"]
+        assert isinstance(retry_arg, Retry)
+        assert retry_arg.total == 5
+        assert retry_arg.allowed_methods is None
+        assert retry_arg.backoff_factor == 1
+        assert 502 in retry_arg.status_forcelist
+        assert 503 in retry_arg.status_forcelist
+        assert 504 in retry_arg.status_forcelist
+
+        # Verify PystacClient.open was called with the StacApiIO instance
+        mock_pystac.open.assert_called_once_with("https://example.com", stac_io=mock_stac_io.return_value)
+
+
+@moto.mock_aws()
+def test_main_flushes_on_iterator_failure(parameters: dict[str, Any], mocker: MockerFixture) -> None:
+    """Test that when the iterator itself raises (e.g. connection abort during pagination),
+    already-harvested data is still flushed."""
+    with moto.mock_aws():
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+
+        good_item = mock.MagicMock()
+        good_item.get_self_href.return_value = "https://example.com/good-item"
+
+        def failing_iterator() -> Generator[mock.MagicMock]:
+            yield good_item
+            raise ConnectionError("Remote end closed connection without response")
+
+        sys.argv = [
+            None,
+            parameters["url"],
+            "workspace-name",
+            "catalog-name",
+            "catalogue_target",
+            parameters["metadata_bucket_name"],
+        ]
+        mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
+        mocker.patch(
+            "stac_harvester.__main__.prepare_catalogue_stac",
+            return_value=("catalogue_name", failing_iterator()),
+        )
+
+        mock_pulsar_client = mock.MagicMock()
+        mock_producer = mock.MagicMock()
+        mock_pulsar_client.create_producer.return_value = mock_producer
+        mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
+
+        with (
+            mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+            mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
+        ):
+            mock_parse.return_value = ("good-key", {"file content": "good data"}, "hash")
+            mock_messager_instance = mock_messager.return_value
+            mock_messager_instance.consume.return_value = None
+
+            stac_harvester.main()
+
+            # The good item harvested before the failure should still be flushed
+            consume_calls = mock_messager_instance.consume.call_args_list
+            all_harvested = {}
+            for call in consume_calls:
+                all_harvested.update(call[0][0].get("harvested_data", {}))
+            assert "good-key.json" in all_harvested
