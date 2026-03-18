@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM ghcr.io/astral-sh/uv:0.9.12 AS uv
+FROM ghcr.io/astral-sh/uv:0.9.30@sha256:538e0b39736e7feae937a65983e49d2ab75e1559d35041f9878b7b7e51de91e4 AS uv
 FROM python:3.12-slim-bullseye
 
 RUN rm -f /etc/apt/apt.conf.d/docker-clean; \
