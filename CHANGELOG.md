@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.14 (23-03-2026)
+
+### Fixed
+
+- Set logging verbosity to INFO level (#34)
+
 ## v0.1.13 (18-03-2026)
 
 ### Fixed
