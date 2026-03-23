@@ -38,7 +38,7 @@ parser.add_argument("source", help="Path of the STAC catalog", type=str)
 parser.add_argument("target", help="Updated path of the STAC catalog", type=str)
 parser.add_argument("metadata_s3_bucket", help="S3 bucket to store harvested metadata", type=str)
 
-setup_logging(verbosity=1, enable_otel_logging=True)
+setup_logging(verbosity=2, enable_otel_logging=True)
 
 minimum_message_entries = int(os.environ.get("MINIMUM_MESSAGE_ENTRIES", 100))
 
