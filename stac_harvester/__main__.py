@@ -437,7 +437,7 @@ def main() -> None:
                     item_id = get_item_id(item)
                     logging.exception(f"Skipping item {item_id} due to unexpected error")
                     continue
-        except Exception:
+        except (ConnectionError, OSError):
             iterator_failed = True
             logging.exception("Iterator failed during pagination. Flushing harvested data.")
 
