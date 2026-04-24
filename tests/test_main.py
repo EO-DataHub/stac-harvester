@@ -69,12 +69,22 @@ def test_prepare_catalogue() -> None:
     mock_catalogue = DefaultMunch.fromDict(mock_catalogue_data)
 
     mock_client = mock.MagicMock()
-    mock_client.open.return_value.get_all_items.return_value = [mock_catalogue]
+    mock_client.id = "test-catalogue"
+    mock_client.get_root.return_value = mock_catalogue
+    mock_client.get_collections.return_value = []
+    mock_search = mock.MagicMock()
+    mock_search.items_as_dicts.return_value = [
+        {"type": "Feature", "id": "item1", "links": [{"rel": "self", "href": f"{source_url}/link_1"}]},
+    ]
+    mock_client.search.return_value = mock_search
 
-    with mock.patch("stac_harvester.__main__.PystacClient", mock_client):
-        _, result = stac_harvester.prepare_catalogue_stac("https://www.this-is-a-stac-url.com")
+    with mock.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client):
+        _, result, _ = stac_harvester.prepare_catalogue_stac("https://www.this-is-a-stac-url.com")
 
-    assert f"{source_url}/link_1" in str(list(result))
+    result_list = list(result)
+    assert any(f"{source_url}/link_1" in str(item) for item in result_list), (
+        f"Expected link_1 in result, got: {result_list}"
+    )
 
 
 @moto.mock_aws()
@@ -103,12 +113,7 @@ def test_main(parameters: dict[str, Any], mocker: MockerFixture) -> None:
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=(
-                "catalogue_name",
-                [
-                    mock_catalogue_entry,
-                ],
-            ),
+            return_value=("catalogue_name", [mock_catalogue_entry], "https://example.com"),
         )
 
         mock_pulsar_client = mock.MagicMock()
@@ -186,7 +191,7 @@ def test_main_with_previous_run_updated(
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue", [mock_catalogue_entry]),
+            return_value=("catalogue", [mock_catalogue_entry], "https://example.com"),
         )
         mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
@@ -271,7 +276,7 @@ def test_main_with_previous_run_deleted(
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue_name", [mock_catalogue_entry]),
+            return_value=("catalogue_name", [mock_catalogue_entry], "https://example.com"),
         )
         mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
@@ -342,7 +347,7 @@ def test_main_skips_bad_item_and_continues(parameters: dict[str, Any], mocker: M
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue_name", [bad_item, good_item]),
+            return_value=("catalogue_name", [bad_item, good_item], "https://example.com"),
         )
 
         mock_pulsar_client = mock.MagicMock()
@@ -400,6 +405,184 @@ def test_create_stac_client_has_post_retry() -> None:
         mock_pystac.open.assert_called_once_with("https://example.com", stac_io=mock_stac_io.return_value)
 
 
+def test_get_item_self_href_from_dict() -> None:
+    """Test that _get_item_self_href extracts self link from item dicts."""
+    item_dict = {
+        "type": "Feature",
+        "id": "test-item",
+        "links": [
+            {"rel": "self", "href": "https://example.com/item/123"},
+            {"rel": "parent", "href": "https://example.com/collection"},
+        ],
+    }
+    assert stac_harvester._get_item_self_href(item_dict) == "https://example.com/item/123"
+
+
+def test_get_item_self_href_from_dict_no_self_link() -> None:
+    """Test that _get_item_self_href returns None when no self link exists."""
+    item_dict = {
+        "type": "Feature",
+        "id": "test-item",
+        "links": [{"rel": "parent", "href": "https://example.com/collection"}],
+    }
+    assert stac_harvester._get_item_self_href(item_dict) is None
+
+
+def test_get_item_self_href_resolves_relative_href() -> None:
+    """Test that _get_item_self_href resolves relative self links against base_url."""
+    item_dict = {
+        "type": "Feature",
+        "id": "test-item",
+        "links": [{"rel": "self", "href": "items/123"}],
+    }
+    assert (
+        stac_harvester._get_item_self_href(item_dict, base_url="https://example.com/collections/col1")
+        == "https://example.com/collections/col1/items/123"
+    )
+
+
+def test_get_item_self_href_resolves_relative_href_with_trailing_slash() -> None:
+    """Test that _get_item_self_href resolves relative links correctly
+    when base_url has no trailing slash (path segment is preserved, not dropped)."""
+    item_dict = {
+        "type": "Feature",
+        "id": "test-item",
+        "links": [{"rel": "self", "href": "items/123"}],
+    }
+    assert (
+        stac_harvester._get_item_self_href(item_dict, base_url="https://example.com/api/stac/v1")
+        == "https://example.com/api/stac/v1/items/123"
+    )
+
+
+def test_get_item_self_href_absolute_href_unchanged() -> None:
+    """Test that _get_item_self_href doesn't modify absolute hrefs even with base_url."""
+    item_dict = {
+        "type": "Feature",
+        "id": "test-item",
+        "links": [{"rel": "self", "href": "https://other.com/item/123"}],
+    }
+    assert (
+        stac_harvester._get_item_self_href(item_dict, base_url="https://example.com/collections/col1")
+        == "https://other.com/item/123"
+    )
+
+
+def test_get_item_self_href_from_pystac_item() -> None:
+    """Test that _get_item_self_href delegates to get_self_href for pystac objects."""
+    mock_item = mock.MagicMock()
+    mock_item.get_self_href.return_value = "https://example.com/item/456"
+    assert stac_harvester._get_item_self_href(mock_item) == "https://example.com/item/456"
+
+
+def test_get_item_self_href_from_pystac_item_error() -> None:
+    """Test that _get_item_self_href returns None if get_self_href raises."""
+    mock_item = mock.MagicMock()
+    mock_item.get_self_href.side_effect = AttributeError("broken")
+    assert stac_harvester._get_item_self_href(mock_item) is None
+
+
+def test_prepare_catalogue_uses_items_as_dicts_when_supported() -> None:
+    """Test that prepare_catalogue_stac uses items_as_dicts when ITEM_SEARCH is supported."""
+
+    mock_client = mock.MagicMock()
+    mock_client.id = "test-catalogue"
+    mock_client.get_root.return_value = mock.MagicMock()
+    mock_client.get_collections.return_value = []
+    mock_client.conforms_to.return_value = True
+    mock_client._search_href.return_value = "https://example.com/search"
+    mock_search = mock.MagicMock()
+    mock_search.items_as_dicts.return_value = [
+        {"type": "Feature", "id": "item1", "links": [{"rel": "self", "href": "https://example.com/item1"}]},
+    ]
+    mock_client.search.return_value = mock_search
+
+    with mock.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client):
+        _, result, base_url = stac_harvester.prepare_catalogue_stac("https://example.com")
+
+    list(result)
+    mock_client.search.assert_called_once()
+    mock_search.items_as_dicts.assert_called_once()
+    mock_client.get_all_items.assert_not_called()
+    assert base_url is not None
+
+
+def test_prepare_catalogue_falls_back_to_get_all_items_when_unsupported() -> None:
+    """Test that prepare_catalogue_stac falls back to get_all_items when ITEM_SEARCH is unsupported."""
+
+    mock_client = mock.MagicMock()
+    mock_client.id = "test-catalogue"
+    mock_client.get_root.return_value = mock.MagicMock()
+    mock_client.get_collections.return_value = []
+    mock_client.conforms_to.return_value = False
+    mock_client.get_all_items.return_value = [
+        mock.MagicMock(),
+    ]
+
+    with mock.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client):
+        _, result, _base_url = stac_harvester.prepare_catalogue_stac("https://example.com")
+
+    list(result)
+    mock_client.search.assert_not_called()
+    mock_client.get_all_items.assert_called_once()
+
+
+@moto.mock_aws()
+def test_main_skips_item_dict_without_self_link_and_continues(
+    parameters: dict[str, Any], mocker: MockerFixture
+) -> None:
+    """Test that an item dict missing a self link is skipped and the harvest continues.
+    This simulates the scenario from GitHub issue #41 where a malformed STAC item
+    would crash the entire harvest."""
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+
+    bad_item = {
+        "type": "Feature",
+        "id": "broken-item",
+        "links": [{"rel": "parent", "href": "https://example.com/collection"}],
+    }
+    good_item = {
+        "type": "Feature",
+        "id": "good-item",
+        "links": [{"rel": "self", "href": "https://example.com/good-item"}],
+    }
+
+    sys.argv = [
+        None,
+        parameters["url"],
+        "workspace-name",
+        "catalog-name",
+        "catalogue_target",
+        parameters["metadata_bucket_name"],
+    ]
+    mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
+    mocker.patch(
+        "stac_harvester.__main__.prepare_catalogue_stac",
+        return_value=("catalogue_name", [bad_item, good_item], "https://example.com"),
+    )
+
+    mock_pulsar_client = mock.MagicMock()
+    mock_producer = mock.MagicMock()
+    mock_pulsar_client.create_producer.return_value = mock_producer
+    mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
+
+    with (
+        mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+        mock.patch("stac_harvester.__main__._get_item_self_href") as mock_href,
+        mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
+    ):
+        mock_href.side_effect = [None, "https://example.com/good-item"]
+        mock_parse.return_value = ("good-key", {"file content": "good data"}, "hash")
+
+        mock_messager_instance = mock_messager.return_value
+        mock_messager_instance.consume.return_value = None
+        stac_harvester.main()
+
+        final_call_args = mock_messager_instance.consume.call_args[0][0]
+        assert "good-key.json" in final_call_args["harvested_data"]
+
+
 @moto.mock_aws()
 def test_main_flushes_on_iterator_failure(parameters: dict[str, Any], mocker: MockerFixture) -> None:
     """Test that when the iterator itself raises (e.g. connection abort during pagination),
@@ -425,7 +608,7 @@ def test_main_flushes_on_iterator_failure(parameters: dict[str, Any], mocker: Mo
     mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
     mocker.patch(
         "stac_harvester.__main__.prepare_catalogue_stac",
-        return_value=("catalogue_name", failing_iterator()),
+        return_value=("catalogue_name", failing_iterator(), "https://example.com"),
     )
 
     mock_pulsar_client = mock.MagicMock()
