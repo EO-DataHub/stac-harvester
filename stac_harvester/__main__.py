@@ -7,7 +7,7 @@ import os
 import urllib.error
 from itertools import chain
 from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 from urllib.request import urlopen
 
 import requests
@@ -19,7 +19,6 @@ from opentelemetry.baggage import set_baggage
 from opentelemetry.context import attach, detach
 from pystac import Collection, Item
 from pystac_client import Client as PystacClient
-from pystac_client.conformance import ConformanceClasses
 from pystac_client.errors import ClientTypeError
 from pystac_client.stac_api_io import StacApiIO
 from urllib3.util.retry import Retry
@@ -98,9 +97,8 @@ def _create_stac_client(url: str) -> PystacClient:
     return PystacClient.open(url, stac_io=stac_io)
 
 
-def prepare_catalogue_stac(source_url: str) -> tuple[str, Any, str]:
-    """Returns all links to URLs that are children of the given source URL,
-    plus a base URL for resolving relative self-hrefs in item dicts."""
+def prepare_catalogue_stac(source_url: str) -> tuple[str, Any]:
+    """Returns all links to URLs that are children of the given source URL"""
 
     try:
         client = _create_stac_client(source_url)
@@ -108,12 +106,7 @@ def prepare_catalogue_stac(source_url: str) -> tuple[str, Any, str]:
 
         catalogue = [client.get_root()]
         all_collections = client.get_collections()
-        if client.conforms_to(ConformanceClasses.ITEM_SEARCH):
-            all_items = client.search().items_as_dicts()
-            base_url = client._search_href()
-        else:
-            all_items = client.get_all_items()
-            base_url = source_url
+        all_items = client.get_all_items()
         pages: Any = chain(catalogue, all_collections, all_items)
     except ClientTypeError:
         collection = Collection.from_file(source_url)
@@ -124,19 +117,17 @@ def prepare_catalogue_stac(source_url: str) -> tuple[str, Any, str]:
         client = _create_stac_client(str(root_catalogue))
         all_collections = client.get_collections()
         pages_list: list[Any] = [client.get_root()]
-        base_url = str(root_catalogue)
         for collection in all_collections:
             self_link = next(link.target for link in collection.links if link.rel == "self")
             if self_link == source_url:
                 pages_list.append(collection)
                 collection = client.get_collection(collection.id)
                 pages = chain(pages_list, collection.get_items(recursive=True))
-                base_url = source_url
                 break
         else:
             pages = pages_list
 
-    return name, pages, base_url
+    return name, pages
 
 
 def parse_github_url(github_url: str) -> tuple[str, str, str]:
@@ -294,30 +285,11 @@ def make_git_catalogue_item(catalogue_name: str) -> list[dict[str, Any]]:
 def get_item_id(item: Item | dict[str, Any]) -> str:
     try:
         if isinstance(item, dict):
-            return item.get("harvester_file_name") or item.get("id", "<unknown>")
+            return item.get("harvester_file_name", "<unknown>")
         else:
             return item.get_self_href() or "<unknown>"
     except Exception:
         return "<unknown>"
-
-
-def _get_item_self_href(item: Any, base_url: str | None = None) -> str | None:  # noqa: ANN401
-    if isinstance(item, dict):
-        for link in item.get("links", []):
-            if isinstance(link, dict) and link.get("rel") == "self":
-                href = link.get("href")
-                if href and base_url and not href.startswith(("http://", "https://")):
-                    # Resolves relative hrefs against the search endpoint URL.
-                    # Most STAC APIs emit absolute hrefs from /search, so
-                    # this branch is rarely taken.
-                    normalized_base = base_url if base_url.endswith("/") else base_url + "/"
-                    href = urljoin(normalized_base, href)
-                return href
-        return None
-    try:
-        return item.get_self_href()
-    except Exception:
-        return None
 
 
 def main() -> None:
@@ -355,7 +327,6 @@ def main() -> None:
     harvested_data: dict[str, Any] = {}
 
     items: Any
-    base_url: str | None = None
     if "github.com" in args.source_url:
         simplified_url = quote(args.source_url).replace("/", "%2f")
         output_prefix = f"git-harvester/{simplified_url}/"
@@ -366,7 +337,7 @@ def main() -> None:
         key_prefix = repo
     else:
         output_prefix = f"stac-harvester/{args.source}/"
-        _catalogue_name, items, base_url = prepare_catalogue_stac(args.source_url)
+        _catalogue_name, items = prepare_catalogue_stac(args.source_url)
         is_git = False
         source = args.source
         key_prefix = ""
@@ -390,11 +361,7 @@ def main() -> None:
                         # logging.info(f"Parsing item: {item['harvester_file_name']}")
                         key, data, file_hash = parse_url_git(item, items)
                     else:
-                        url = _get_item_self_href(item, base_url=base_url)
-                        if url is None:
-                            item_id = get_item_id(item)
-                            logging.error(f"Skipping item {item_id}: no self link found")
-                            continue
+                        url = item.get_self_href()
 
                         # logging.info(f"Parsing URL: {url}")
                         key, data, file_hash = parse_url_stac(url)
