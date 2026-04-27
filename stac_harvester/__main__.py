@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import urllib.error
+from collections.abc import Iterator
+from dataclasses import dataclass
 from itertools import chain
 from typing import Any
 from urllib.parse import quote, urljoin
@@ -18,6 +20,7 @@ from opentelemetry import trace
 from opentelemetry.baggage import set_baggage
 from opentelemetry.context import attach, detach
 from pystac import Collection, Item
+from pystac.errors import STACError, STACTypeError
 from pystac_client import Client as PystacClient
 from pystac_client.conformance import ConformanceClasses
 from pystac_client.errors import ClientTypeError
@@ -48,6 +51,11 @@ global parent_keys
 parent_keys: dict[str, str] = {}
 
 tracer = trace.get_tracer(__name__)
+
+
+@dataclass
+class HarvestRunState:
+    is_partial: bool = False
 
 
 def get_file_contents(url: str, retries: int = 0) -> bytes:
@@ -98,9 +106,39 @@ def _create_stac_client(url: str) -> PystacClient:
     return PystacClient.open(url, stac_io=stac_io)
 
 
-def prepare_catalogue_stac(source_url: str) -> tuple[str, Any, str]:
-    """Returns all links to URLs that are children of the given source URL,
-    plus a base URL for resolving relative self-hrefs in item dicts."""
+def iter_search_items_safely(client: PystacClient, run_state: HarvestRunState | None = None) -> Iterator[Item]:
+    """Yield valid item-search results while skipping malformed STAC item payloads."""
+    search = client.search()
+    base_url = getattr(search, "url", None)
+    for item_dict in search.items_as_dicts():
+        try:
+            if not isinstance(item_dict, dict):
+                raise TypeError(f"Item-search feature must be an object, got {type(item_dict).__name__}")
+            if isinstance(base_url, str):
+                resolve_item_search_self_href(item_dict, base_url)
+            yield Item.from_dict(item_dict, root=client, preserve_dict=False)
+        except (AttributeError, KeyError, TypeError, ValueError, STACError, STACTypeError):
+            if run_state is not None:
+                run_state.is_partial = True
+            item_id = get_item_id(item_dict)
+            logging.exception(f"Skipping malformed STAC item {item_id}")
+            continue
+
+
+def resolve_item_search_self_href(item_dict: dict[str, Any], base_url: str) -> None:
+    """Make relative item-search self hrefs absolute before PySTAC conversion."""
+    for link in item_dict.get("links", []):
+        if not isinstance(link, dict) or link.get("rel") != "self":
+            continue
+
+        href = link.get("href")
+        if isinstance(href, str):
+            link["href"] = urljoin(base_url if base_url.endswith("/") else base_url + "/", href)
+        return
+
+
+def prepare_catalogue_stac(source_url: str, run_state: HarvestRunState | None = None) -> tuple[str, Any]:
+    """Returns all links to URLs that are children of the given source URL"""
 
     try:
         client = _create_stac_client(source_url)
@@ -109,11 +147,9 @@ def prepare_catalogue_stac(source_url: str) -> tuple[str, Any, str]:
         catalogue = [client.get_root()]
         all_collections = client.get_collections()
         if client.conforms_to(ConformanceClasses.ITEM_SEARCH):
-            all_items = client.search().items_as_dicts()
-            base_url = client._search_href()
+            all_items = iter_search_items_safely(client, run_state)
         else:
             all_items = client.get_all_items()
-            base_url = source_url
         pages: Any = chain(catalogue, all_collections, all_items)
     except ClientTypeError:
         collection = Collection.from_file(source_url)
@@ -124,19 +160,17 @@ def prepare_catalogue_stac(source_url: str) -> tuple[str, Any, str]:
         client = _create_stac_client(str(root_catalogue))
         all_collections = client.get_collections()
         pages_list: list[Any] = [client.get_root()]
-        base_url = str(root_catalogue)
         for collection in all_collections:
             self_link = next(link.target for link in collection.links if link.rel == "self")
             if self_link == source_url:
                 pages_list.append(collection)
                 collection = client.get_collection(collection.id)
                 pages = chain(pages_list, collection.get_items(recursive=True))
-                base_url = source_url
                 break
         else:
             pages = pages_list
 
-    return name, pages, base_url
+    return name, pages
 
 
 def parse_github_url(github_url: str) -> tuple[str, str, str]:
@@ -301,25 +335,6 @@ def get_item_id(item: Item | dict[str, Any]) -> str:
         return "<unknown>"
 
 
-def _get_item_self_href(item: Any, base_url: str | None = None) -> str | None:  # noqa: ANN401
-    if isinstance(item, dict):
-        for link in item.get("links", []):
-            if isinstance(link, dict) and link.get("rel") == "self":
-                href = link.get("href")
-                if href and base_url and not href.startswith(("http://", "https://")):
-                    # Resolves relative hrefs against the search endpoint URL.
-                    # Most STAC APIs emit absolute hrefs from /search, so
-                    # this branch is rarely taken.
-                    normalized_base = base_url if base_url.endswith("/") else base_url + "/"
-                    href = urljoin(normalized_base, href)
-                return href
-        return None
-    try:
-        return item.get_self_href()
-    except Exception:
-        return None
-
-
 def main() -> None:
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
@@ -349,13 +364,14 @@ def main() -> None:
     logging.info(f"Harvesting from source URL: {args.source_url}")
 
     metadata_s3_key = f"harvested-metadata/{args.source_url.replace('/', '')}"
-    previously_harvested = get_metadata(args.metadata_s3_bucket, metadata_s3_key, s3_client)
+    previous_metadata = get_metadata(args.metadata_s3_bucket, metadata_s3_key, s3_client)
+    previously_harvested = previous_metadata.copy()
     logging.info(f"Previously harvested URLs: {previously_harvested}")
     latest_harvested: dict[str, Any] = {}
     harvested_data: dict[str, Any] = {}
 
     items: Any
-    base_url: str | None = None
+    run_state = HarvestRunState()
     if "github.com" in args.source_url:
         simplified_url = quote(args.source_url).replace("/", "%2f")
         output_prefix = f"git-harvester/{simplified_url}/"
@@ -366,7 +382,7 @@ def main() -> None:
         key_prefix = repo
     else:
         output_prefix = f"stac-harvester/{args.source}/"
-        _catalogue_name, items, base_url = prepare_catalogue_stac(args.source_url)
+        _catalogue_name, items = prepare_catalogue_stac(args.source_url, run_state)
         is_git = False
         source = args.source
         key_prefix = ""
@@ -390,11 +406,7 @@ def main() -> None:
                         # logging.info(f"Parsing item: {item['harvester_file_name']}")
                         key, data, file_hash = parse_url_git(item, items)
                     else:
-                        url = _get_item_self_href(item, base_url=base_url)
-                        if url is None:
-                            item_id = get_item_id(item)
-                            logging.error(f"Skipping item {item_id}: no self link found")
-                            continue
+                        url = item.get_self_href()
 
                         # logging.info(f"Parsing URL: {url}")
                         key, data, file_hash = parse_url_stac(url)
@@ -422,12 +434,6 @@ def main() -> None:
 
                         # logging.info(f"Sending {len(harvested_data)} messages: {messages}")
                         stac_harvester_messager.consume(messages)
-                        upload_file_s3(
-                            json.dumps(latest_harvested),
-                            args.metadata_s3_bucket,
-                            metadata_s3_key,
-                            s3_client,
-                        )
                         harvested_data = {}
                 except HarvesterFetchError as e:
                     item_id = get_item_id(item)
@@ -437,24 +443,28 @@ def main() -> None:
                     item_id = get_item_id(item)
                     logging.exception(f"Skipping item {item_id} due to unexpected error")
                     continue
-        except (ConnectionError, OSError):
-            iterator_failed = True
-            logging.exception("Iterator failed during pagination. Flushing harvested data.")
+        except (ConnectionError, OSError, AttributeError, KeyError, TypeError, ValueError, STACError, STACTypeError):
+            iterator_failed = run_state.is_partial = True
+            logging.exception("Iterator failed during pagination or item construction. Flushing harvested data.")
 
         messages["harvested_data"] = harvested_data
         messages["deleted_keys"] = []
         stac_harvester_messager.consume(messages)
-        upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
 
-        if not iterator_failed:
+        if not iterator_failed and not run_state.is_partial:
             deleted_keys = list(previously_harvested.keys())
             messages["harvested_data"] = harvested_data
             messages["deleted_keys"] = deleted_keys
             stac_harvester_messager.consume(messages)
 
-        # Record harvested hash data in S3
-        upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
-        logging.info(f"Harvested files: {latest_harvested}")
+            # Record harvested hash data in S3 only after a complete run.
+            upload_file_s3(json.dumps(latest_harvested), args.metadata_s3_bucket, metadata_s3_key, s3_client)
+            logging.info(f"Harvested files: {latest_harvested}")
+        else:
+            logging.warning(
+                "Harvest completed partially; suppressing deletions and preserving previous harvest metadata."
+            )
+            logging.info(f"Previous harvested files preserved: {previous_metadata}")
 
     detach(token_source)
     detach(token_workspace)

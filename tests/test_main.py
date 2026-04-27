@@ -12,6 +12,7 @@ import moto
 import pytest
 from botocore.client import BaseClient
 from munch import DefaultMunch
+from pystac.errors import STACError
 from pytest_mock import MockerFixture
 from urllib3.util.retry import Retry
 
@@ -70,21 +71,15 @@ def test_prepare_catalogue() -> None:
 
     mock_client = mock.MagicMock()
     mock_client.id = "test-catalogue"
-    mock_client.get_root.return_value = mock_catalogue
+    mock_client.get_root.return_value = mock.MagicMock()
     mock_client.get_collections.return_value = []
-    mock_search = mock.MagicMock()
-    mock_search.items_as_dicts.return_value = [
-        {"type": "Feature", "id": "item1", "links": [{"rel": "self", "href": f"{source_url}/link_1"}]},
-    ]
-    mock_client.search.return_value = mock_search
+    mock_client.conforms_to.return_value = False
+    mock_client.get_all_items.return_value = [mock_catalogue]
 
     with mock.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client):
-        _, result, _ = stac_harvester.prepare_catalogue_stac("https://www.this-is-a-stac-url.com")
+        _, result = stac_harvester.prepare_catalogue_stac("https://www.this-is-a-stac-url.com")
 
-    result_list = list(result)
-    assert any(f"{source_url}/link_1" in str(item) for item in result_list), (
-        f"Expected link_1 in result, got: {result_list}"
-    )
+    assert f"{source_url}/link_1" in str(list(result))
 
 
 @moto.mock_aws()
@@ -113,7 +108,12 @@ def test_main(parameters: dict[str, Any], mocker: MockerFixture) -> None:
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue_name", [mock_catalogue_entry], "https://example.com"),
+            return_value=(
+                "catalogue_name",
+                [
+                    mock_catalogue_entry,
+                ],
+            ),
         )
 
         mock_pulsar_client = mock.MagicMock()
@@ -191,7 +191,7 @@ def test_main_with_previous_run_updated(
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue", [mock_catalogue_entry], "https://example.com"),
+            return_value=("catalogue", [mock_catalogue_entry]),
         )
         mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
@@ -276,7 +276,7 @@ def test_main_with_previous_run_deleted(
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="newhash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue_name", [mock_catalogue_entry], "https://example.com"),
+            return_value=("catalogue_name", [mock_catalogue_entry]),
         )
         mock_pulsar_client = mock.MagicMock()
         mock_producer = mock.MagicMock()
@@ -347,7 +347,7 @@ def test_main_skips_bad_item_and_continues(parameters: dict[str, Any], mocker: M
         mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
         mocker.patch(
             "stac_harvester.__main__.prepare_catalogue_stac",
-            return_value=("catalogue_name", [bad_item, good_item], "https://example.com"),
+            return_value=("catalogue_name", [bad_item, good_item]),
         )
 
         mock_pulsar_client = mock.MagicMock()
@@ -405,148 +405,131 @@ def test_create_stac_client_has_post_retry() -> None:
         mock_pystac.open.assert_called_once_with("https://example.com", stac_io=mock_stac_io.return_value)
 
 
-def test_get_item_self_href_from_dict() -> None:
-    """Test that _get_item_self_href extracts self link from item dicts."""
-    item_dict = {
-        "type": "Feature",
-        "id": "test-item",
-        "links": [
-            {"rel": "self", "href": "https://example.com/item/123"},
-            {"rel": "parent", "href": "https://example.com/collection"},
-        ],
-    }
-    assert stac_harvester._get_item_self_href(item_dict) == "https://example.com/item/123"
+def test_get_item_id_uses_dict_id_fallback() -> None:
+    """Malformed non-Git STAC item dicts should log their upstream item id."""
+    assert stac_harvester.get_item_id({"id": "bad-upstream-item"}) == "bad-upstream-item"
 
 
-def test_get_item_self_href_from_dict_no_self_link() -> None:
-    """Test that _get_item_self_href returns None when no self link exists."""
-    item_dict = {
-        "type": "Feature",
-        "id": "test-item",
-        "links": [{"rel": "parent", "href": "https://example.com/collection"}],
-    }
-    assert stac_harvester._get_item_self_href(item_dict) is None
+def test_iter_search_items_safely_skips_malformed_item_and_continues() -> None:
+    """Malformed item-search features should not stop later valid features being harvested."""
+    client = mock.MagicMock()
+    run_state = stac_harvester.HarvestRunState()
+    search = mock.MagicMock()
+    search.items_as_dicts.return_value = [
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "broken-item",
+            "geometry": None,
+            "bbox": None,
+            "properties": {},
+            "links": [{"rel": "self", "href": "https://example.com/items/broken-item"}],
+        },
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "good-item",
+            "geometry": None,
+            "bbox": None,
+            "properties": {"datetime": "2020-01-01T00:00:00Z"},
+            "links": [{"rel": "self", "href": "https://example.com/items/good-item"}],
+        },
+    ]
+    client.search.return_value = search
+
+    items = list(stac_harvester.iter_search_items_safely(client, run_state))
+
+    assert len(items) == 1
+    assert items[0].id == "good-item"
+    assert items[0].get_self_href() == "https://example.com/items/good-item"
+    assert run_state.is_partial is True
 
 
-def test_get_item_self_href_resolves_relative_href() -> None:
-    """Test that _get_item_self_href resolves relative self links against base_url."""
-    item_dict = {
-        "type": "Feature",
-        "id": "test-item",
-        "links": [{"rel": "self", "href": "items/123"}],
-    }
-    assert (
-        stac_harvester._get_item_self_href(item_dict, base_url="https://example.com/collections/col1")
-        == "https://example.com/collections/col1/items/123"
-    )
+def test_iter_search_items_safely_resolves_relative_self_href() -> None:
+    """Relative self hrefs from item-search must not become local filesystem paths."""
+    client = mock.MagicMock()
+    search = mock.MagicMock()
+    search.url = "https://example.com/search"
+    search.items_as_dicts.return_value = [
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "relative-item",
+            "geometry": None,
+            "bbox": None,
+            "properties": {"datetime": "2020-01-01T00:00:00Z"},
+            "links": [{"rel": "self", "href": "items/relative-item"}],
+        },
+    ]
+    client.search.return_value = search
+
+    items = list(stac_harvester.iter_search_items_safely(client))
+
+    assert len(items) == 1
+    assert items[0].get_self_href() == "https://example.com/search/items/relative-item"
 
 
-def test_get_item_self_href_resolves_relative_href_with_trailing_slash() -> None:
-    """Test that _get_item_self_href resolves relative links correctly
-    when base_url has no trailing slash (path segment is preserved, not dropped)."""
-    item_dict = {
-        "type": "Feature",
-        "id": "test-item",
-        "links": [{"rel": "self", "href": "items/123"}],
-    }
-    assert (
-        stac_harvester._get_item_self_href(item_dict, base_url="https://example.com/api/stac/v1")
-        == "https://example.com/api/stac/v1/items/123"
-    )
+def test_iter_search_items_safely_skips_non_object_feature() -> None:
+    """Malformed non-object item-search features should be skipped."""
+    client = mock.MagicMock()
+    run_state = stac_harvester.HarvestRunState()
+    search = mock.MagicMock()
+    search.url = "https://example.com/search"
+    search.items_as_dicts.return_value = [
+        None,
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "good-item",
+            "geometry": None,
+            "bbox": None,
+            "properties": {"datetime": "2020-01-01T00:00:00Z"},
+            "links": [{"rel": "self", "href": "https://example.com/items/good-item"}],
+        },
+    ]
+    client.search.return_value = search
+
+    items = list(stac_harvester.iter_search_items_safely(client, run_state))
+
+    assert len(items) == 1
+    assert items[0].id == "good-item"
+    assert run_state.is_partial is True
 
 
-def test_get_item_self_href_absolute_href_unchanged() -> None:
-    """Test that _get_item_self_href doesn't modify absolute hrefs even with base_url."""
-    item_dict = {
-        "type": "Feature",
-        "id": "test-item",
-        "links": [{"rel": "self", "href": "https://other.com/item/123"}],
-    }
-    assert (
-        stac_harvester._get_item_self_href(item_dict, base_url="https://example.com/collections/col1")
-        == "https://other.com/item/123"
-    )
-
-
-def test_get_item_self_href_from_pystac_item() -> None:
-    """Test that _get_item_self_href delegates to get_self_href for pystac objects."""
-    mock_item = mock.MagicMock()
-    mock_item.get_self_href.return_value = "https://example.com/item/456"
-    assert stac_harvester._get_item_self_href(mock_item) == "https://example.com/item/456"
-
-
-def test_get_item_self_href_from_pystac_item_error() -> None:
-    """Test that _get_item_self_href returns None if get_self_href raises."""
-    mock_item = mock.MagicMock()
-    mock_item.get_self_href.side_effect = AttributeError("broken")
-    assert stac_harvester._get_item_self_href(mock_item) is None
-
-
-def test_prepare_catalogue_uses_items_as_dicts_when_supported() -> None:
-    """Test that prepare_catalogue_stac uses items_as_dicts when ITEM_SEARCH is supported."""
-
+def test_prepare_catalogue_uses_safe_search_iterator_when_item_search_supported() -> None:
+    """Item-search APIs should use safe per-feature conversion, not raw get_all_items()."""
     mock_client = mock.MagicMock()
     mock_client.id = "test-catalogue"
     mock_client.get_root.return_value = mock.MagicMock()
     mock_client.get_collections.return_value = []
     mock_client.conforms_to.return_value = True
-    mock_client._search_href.return_value = "https://example.com/search"
-    mock_search = mock.MagicMock()
-    mock_search.items_as_dicts.return_value = [
-        {"type": "Feature", "id": "item1", "links": [{"rel": "self", "href": "https://example.com/item1"}]},
-    ]
-    mock_client.search.return_value = mock_search
 
-    with mock.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client):
-        _, result, base_url = stac_harvester.prepare_catalogue_stac("https://example.com")
+    with (
+        mock.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client),
+        mock.patch("stac_harvester.__main__.iter_search_items_safely", return_value=iter([])) as mock_safe_items,
+    ):
+        _, result = stac_harvester.prepare_catalogue_stac("https://example.com")
 
     list(result)
-    mock_client.search.assert_called_once()
-    mock_search.items_as_dicts.assert_called_once()
+    mock_safe_items.assert_called_once_with(mock_client, None)
     mock_client.get_all_items.assert_not_called()
-    assert base_url is not None
-
-
-def test_prepare_catalogue_falls_back_to_get_all_items_when_unsupported() -> None:
-    """Test that prepare_catalogue_stac falls back to get_all_items when ITEM_SEARCH is unsupported."""
-
-    mock_client = mock.MagicMock()
-    mock_client.id = "test-catalogue"
-    mock_client.get_root.return_value = mock.MagicMock()
-    mock_client.get_collections.return_value = []
-    mock_client.conforms_to.return_value = False
-    mock_client.get_all_items.return_value = [
-        mock.MagicMock(),
-    ]
-
-    with mock.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client):
-        _, result, _base_url = stac_harvester.prepare_catalogue_stac("https://example.com")
-
-    list(result)
-    mock_client.search.assert_not_called()
-    mock_client.get_all_items.assert_called_once()
 
 
 @moto.mock_aws()
-def test_main_skips_item_dict_without_self_link_and_continues(
+def test_main_matches_existing_item_search_item_without_changing_identity(
     parameters: dict[str, Any], mocker: MockerFixture
 ) -> None:
-    """Test that an item dict missing a self link is skipped and the harvest continues.
-    This simulates the scenario from GitHub issue #41 where a malformed STAC item
-    would crash the entire harvest."""
+    """The #41 fix must not make unchanged valid items appear newly harvested."""
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+    s3.put_object(
+        Bucket=parameters["metadata_bucket_name"],
+        Key=f"harvested-metadata/{parameters['url'].replace('/', '')}",
+        Body=json.dumps({"collections/test-collection/items/test-item.json": "hash"}),
+    )
 
-    bad_item = {
-        "type": "Feature",
-        "id": "broken-item",
-        "links": [{"rel": "parent", "href": "https://example.com/collection"}],
-    }
-    good_item = {
-        "type": "Feature",
-        "id": "good-item",
-        "links": [{"rel": "self", "href": "https://example.com/good-item"}],
-    }
+    item = mock.MagicMock()
+    item.get_self_href.return_value = "https://example.com/items/test-item"
 
     sys.argv = [
         None,
@@ -556,10 +539,9 @@ def test_main_skips_item_dict_without_self_link_and_continues(
         "catalogue_target",
         parameters["metadata_bucket_name"],
     ]
-    mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
     mocker.patch(
         "stac_harvester.__main__.prepare_catalogue_stac",
-        return_value=("catalogue_name", [bad_item, good_item], "https://example.com"),
+        return_value=("catalogue_name", [item]),
     )
 
     mock_pulsar_client = mock.MagicMock()
@@ -569,18 +551,92 @@ def test_main_skips_item_dict_without_self_link_and_continues(
 
     with (
         mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
-        mock.patch("stac_harvester.__main__._get_item_self_href") as mock_href,
         mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
     ):
-        mock_href.side_effect = [None, "https://example.com/good-item"]
-        mock_parse.return_value = ("good-key", {"file content": "good data"}, "hash")
+        mock_parse.return_value = (
+            "collections/test-collection/items/test-item",
+            {"file content": "unchanged data"},
+            "hash",
+        )
 
         mock_messager_instance = mock_messager.return_value
         mock_messager_instance.consume.return_value = None
         stac_harvester.main()
 
-        final_call_args = mock_messager_instance.consume.call_args[0][0]
-        assert "good-key.json" in final_call_args["harvested_data"]
+        all_harvested = {}
+        all_deleted = []
+        for call in mock_messager_instance.consume.call_args_list:
+            all_harvested.update(call[0][0].get("harvested_data", {}))
+            all_deleted.extend(call[0][0].get("deleted_keys", []))
+
+        assert all_harvested == {}
+        assert all_deleted == []
+
+
+@moto.mock_aws()
+def test_main_suppresses_deletions_after_skipping_malformed_search_item(
+    parameters: dict[str, Any], mocker: MockerFixture
+) -> None:
+    """Malformed item-search features make the run partial, so stale keys cannot be deleted."""
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+    s3.put_object(
+        Bucket=parameters["metadata_bucket_name"],
+        Key=f"harvested-metadata/{parameters['url'].replace('/', '')}",
+        Body=json.dumps({"collections/test-collection/items/broken-item.json": "hash"}),
+    )
+
+    mock_client = mock.MagicMock()
+    mock_client.id = "test-catalogue"
+    mock_client.get_root.return_value = mock.MagicMock()
+    mock_client.get_root.return_value.get_self_href.return_value = "https://example.com/root"
+    mock_client.get_collections.return_value = []
+    mock_client.conforms_to.return_value = True
+    mock_search = mock.MagicMock()
+    mock_search.url = "https://example.com/search"
+    mock_search.items_as_dicts.return_value = [
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "broken-item",
+            "geometry": None,
+            "bbox": None,
+            "properties": {},
+            "links": [{"rel": "self", "href": "https://example.com/items/broken-item"}],
+        },
+    ]
+    mock_client.search.return_value = mock_search
+    mocker.patch("stac_harvester.__main__._create_stac_client", return_value=mock_client)
+
+    sys.argv = [
+        None,
+        parameters["url"],
+        "workspace-name",
+        "catalog-name",
+        "catalogue_target",
+        parameters["metadata_bucket_name"],
+    ]
+
+    mock_pulsar_client = mock.MagicMock()
+    mock_producer = mock.MagicMock()
+    mock_pulsar_client.create_producer.return_value = mock_producer
+    mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
+
+    with (
+        mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+        mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
+    ):
+        mock_parse.return_value = ("catalogs/root", {"file content": "root data"}, "root-hash")
+        mock_messager_instance = mock_messager.return_value
+        mock_messager_instance.consume.return_value = None
+
+        stac_harvester.main()
+
+        all_deleted = []
+        for call in mock_messager_instance.consume.call_args_list:
+            all_deleted.extend(call[0][0].get("deleted_keys", []))
+
+        assert all_deleted == []
 
 
 @moto.mock_aws()
@@ -608,7 +664,7 @@ def test_main_flushes_on_iterator_failure(parameters: dict[str, Any], mocker: Mo
     mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
     mocker.patch(
         "stac_harvester.__main__.prepare_catalogue_stac",
-        return_value=("catalogue_name", failing_iterator(), "https://example.com"),
+        return_value=("catalogue_name", failing_iterator()),
     )
 
     mock_pulsar_client = mock.MagicMock()
@@ -638,3 +694,67 @@ def test_main_flushes_on_iterator_failure(parameters: dict[str, Any], mocker: Mo
         for call in consume_calls:
             all_deleted.extend(call[0][0].get("deleted_keys", []))
         assert all_deleted == [], f"Expected no deletions on iterator failure, got: {all_deleted}"
+
+
+@moto.mock_aws()
+def test_main_flushes_on_malformed_iterator_item(parameters: dict[str, Any], mocker: MockerFixture) -> None:
+    """If item construction fails outside the loop body, flush processed data and avoid deletions."""
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+    previous_metadata = {"collections/old/items/old-item.json": "old-hash"}
+    metadata_key = f"harvested-metadata/{parameters['url'].replace('/', '')}"
+    s3.put_object(
+        Bucket=parameters["metadata_bucket_name"],
+        Key=metadata_key,
+        Body=json.dumps(previous_metadata),
+    )
+
+    good_item = mock.MagicMock()
+    good_item.get_self_href.return_value = "https://example.com/good-item"
+
+    def malformed_iterator() -> Generator[mock.MagicMock]:
+        yield good_item
+        raise STACError("Invalid item payload")
+
+    sys.argv = [
+        None,
+        parameters["url"],
+        "workspace-name",
+        "catalog-name",
+        "catalogue_target",
+        parameters["metadata_bucket_name"],
+    ]
+    mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
+    mocker.patch(
+        "stac_harvester.__main__.prepare_catalogue_stac",
+        return_value=("catalogue_name", malformed_iterator()),
+    )
+
+    mock_pulsar_client = mock.MagicMock()
+    mock_producer = mock.MagicMock()
+    mock_pulsar_client.create_producer.return_value = mock_producer
+    mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock_pulsar_client)
+
+    with (
+        mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+        mock.patch("stac_harvester.__main__.parse_url_stac") as mock_parse,
+    ):
+        mock_parse.return_value = ("good-key", {"file content": "good data"}, "hash")
+        mock_messager_instance = mock_messager.return_value
+        mock_messager_instance.consume.return_value = None
+
+        stac_harvester.main()
+
+        all_harvested = {}
+        all_deleted = []
+        for call in mock_messager_instance.consume.call_args_list:
+            all_harvested.update(call[0][0].get("harvested_data", {}))
+            all_deleted.extend(call[0][0].get("deleted_keys", []))
+
+        assert "good-key.json" in all_harvested
+        assert all_deleted == []
+
+    stored_metadata = json.loads(
+        s3.get_object(Bucket=parameters["metadata_bucket_name"], Key=metadata_key)["Body"].read().decode("utf-8")
+    )
+    assert stored_metadata == previous_metadata
