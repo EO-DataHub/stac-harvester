@@ -496,6 +496,34 @@ def test_iter_search_items_safely_skips_non_object_feature() -> None:
     assert run_state.is_partial is True
 
 
+def test_iter_search_items_safely_does_not_catch_consumer_exceptions() -> None:
+    """Downstream item processing errors must not be reclassified as malformed conversion errors."""
+    client = mock.MagicMock()
+    run_state = stac_harvester.HarvestRunState()
+    search = mock.MagicMock()
+    search.url = "https://example.com/search"
+    search.items_as_dicts.return_value = [
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "valid-item",
+            "geometry": None,
+            "bbox": None,
+            "properties": {"datetime": "2020-01-01T00:00:00Z"},
+            "links": [{"rel": "self", "href": "https://example.com/items/valid-item"}],
+        }
+    ]
+    client.search.return_value = search
+    iterator = stac_harvester.iter_search_items_safely(client, run_state)
+
+    item = next(iterator)
+    assert item.id == "valid-item"
+
+    with pytest.raises(RuntimeError):
+        raise RuntimeError("consumer failed")
+    assert run_state.is_partial is False
+
+
 def test_prepare_catalogue_uses_safe_search_iterator_when_item_search_supported() -> None:
     """Item-search APIs should use safe per-feature conversion, not raw get_all_items()."""
     mock_client = mock.MagicMock()

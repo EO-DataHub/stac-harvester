@@ -116,13 +116,14 @@ def iter_search_items_safely(client: PystacClient, run_state: HarvestRunState | 
                 raise TypeError(f"Item-search feature must be an object, got {type(item_dict).__name__}")
             if isinstance(base_url, str):
                 resolve_item_search_self_href(item_dict, base_url)
-            yield Item.from_dict(item_dict, root=client, preserve_dict=False)
+            item = Item.from_dict(item_dict, root=client, preserve_dict=False)
         except (AttributeError, KeyError, TypeError, ValueError, STACError, STACTypeError):
             if run_state is not None:
                 run_state.is_partial = True
             item_id = get_item_id(item_dict)
             logging.exception(f"Skipping malformed STAC item {item_id}")
             continue
+        yield item
 
 
 def resolve_item_search_self_href(item_dict: dict[str, Any], base_url: str) -> None:
