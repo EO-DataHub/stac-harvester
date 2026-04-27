@@ -420,10 +420,12 @@ def test_iter_search_items_safely_skips_malformed_item_and_continues() -> None:
             "type": "Feature",
             "stac_version": "1.0.0",
             "id": "broken-item",
+            "collection": "test-collection",
             "geometry": None,
             "bbox": None,
             "properties": {},
             "links": [{"rel": "self", "href": "https://example.com/items/broken-item"}],
+            "assets": [],
         },
         {
             "type": "Feature",
@@ -442,6 +444,32 @@ def test_iter_search_items_safely_skips_malformed_item_and_continues() -> None:
     assert len(items) == 1
     assert items[0].id == "good-item"
     assert items[0].get_self_href() == "https://example.com/items/good-item"
+    assert run_state.is_partial is True
+
+
+def test_iter_search_items_safely_skips_items_with_invalid_asset_shape() -> None:
+    """Malformed item-search payloads should be skipped before they abort iteration."""
+    client = mock.MagicMock()
+    run_state = stac_harvester.HarvestRunState()
+    search = mock.MagicMock()
+    search.items_as_dicts.return_value = [
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "ceda-item",
+            "collection": "cmip6",
+            "geometry": None,
+            "bbox": None,
+            "properties": {"datetime": "2020-01-01T00:00:00Z"},
+            "links": [{"rel": "self", "href": "https://example.com/items/ceda-item"}],
+            "assets": [],
+        },
+    ]
+    client.search.return_value = search
+
+    items = list(stac_harvester.iter_search_items_safely(client, run_state))
+
+    assert items == []
     assert run_state.is_partial is True
 
 
@@ -516,11 +544,13 @@ def test_iter_search_items_safely_does_not_catch_consumer_exceptions() -> None:
     client.search.return_value = search
     iterator = stac_harvester.iter_search_items_safely(client, run_state)
 
-    item = next(iterator)
-    assert item.id == "valid-item"
+    def consume_and_fail() -> None:
+        for item in iterator:
+            assert item.id == "valid-item"
+            raise RuntimeError("consumer failed")
 
     with pytest.raises(RuntimeError):
-        raise RuntimeError("consumer failed")
+        consume_and_fail()
     assert run_state.is_partial is False
 
 
@@ -627,10 +657,12 @@ def test_main_suppresses_deletions_after_skipping_malformed_search_item(
             "type": "Feature",
             "stac_version": "1.0.0",
             "id": "broken-item",
+            "collection": "test-collection",
             "geometry": None,
             "bbox": None,
             "properties": {},
             "links": [{"rel": "self", "href": "https://example.com/items/broken-item"}],
+            "assets": [],
         },
     ]
     mock_client.search.return_value = mock_search
