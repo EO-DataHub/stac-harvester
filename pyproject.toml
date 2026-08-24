@@ -67,6 +67,7 @@ allow-direct-references = true
 
 [tool.uv]
 package = true
+exclude-newer = "7 days"
 
 [tool.uv.sources]
 eodhp-utils = { git = "https://github.com/UKEODHP/eodhp-utils", rev = "feature/EODHP-830-fixing-invalid-links-otel" }
