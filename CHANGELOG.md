@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.1.15 (12-10-2026)
+
+### Fixed
+
+- A source outage can no longer cause deletions: any skipped, failed, mismatched, misplaced or
+  malformed entry, or malformed or incomplete listing, marks the run as partial, which suppresses
+  all deletes
+- Collection harvesters only delete keys beneath their own collection; the shared root catalogue
+  and other out-of-scope keys are never deleted
+- Fail the run when the configured collection is not found upstream instead of harvesting only
+  the root catalogue
+- Retry fetches with backoff and a timeout, including failures while reading the response; abort
+  the harvest after repeated fetch failures or undecodable responses (entries answering 404 or
+  410 do not count)
+- Stop and fail the run, without sending deletes or updating the harvest metadata, when harvested
+  data cannot be published; deletes are sent in a message of their own after all updates
+
+### Added
+
+- Delete circuit breaker: deletes are withheld if they include a catalogue or collection, if the
+  listing returned no items although items were previously harvested, or if they exceed
+  `MAX_DELETE_FRACTION` (default 0.2, must be between 0 and 1) of previously harvested keys.
+  Withheld keys are reconsidered on every run; `ALLOW_UNSAFE_DELETES=true` overrides the breaker
+  for a one-off run
+
+### Changed
+
+- After a partial run the harvest metadata is merged (new hashes recorded, unseen keys kept)
+  rather than left untouched. A listed entry that permanently fails to fetch therefore suppresses
+  all deletes for that harvester, and logs `HARVEST PARTIAL` on every run, until fixed upstream
+- Handle malformed STAC item-search results safely
+
 ## v0.1.14 (23-03-2026)
 
 ### Fixed
