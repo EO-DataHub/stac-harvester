@@ -57,10 +57,12 @@ STAC Harvesters are configured through environment variables
 The harvester only sends `deleted_keys` when it is confident that the entries really are gone upstream:
 
 - **Partial runs never delete.** If any listed entry is skipped or fails to fetch, if the fetched entry is not the
-  listed one (different id or type), or if the listing fails or returns a malformed page, the run logs
-  `HARVEST PARTIAL`, sends no deletes and merges the new hashes into the stored harvest metadata. A listed entry
-  that permanently fails to fetch therefore suppresses all deletes for that harvester until it is fixed upstream;
-  the `HARVEST PARTIAL` error on every run is expected in that case.
+  listed one (different id or type, or an item that is not beneath its collection), or if the listing fails,
+  returns a malformed page or ends short of its `numberMatched`, the run logs `HARVEST PARTIAL`, sends no deletes
+  and merges the new hashes into the stored harvest metadata. A listed entry that permanently fails to fetch
+  therefore suppresses all deletes for that harvester until it is fixed upstream; the `HARVEST PARTIAL` error on
+  every run is expected in that case. A full-catalogue harvest of a catalogue whose items carry no `parent` link
+  is always partial.
 - **Collection harvesters only delete beneath their own collection.** When the source URL is a collection, the
   root catalogue and any other key outside that collection are never deleted. If the collection is no longer listed
   upstream the run fails without sending or storing anything.
@@ -71,9 +73,10 @@ The harvester only sends `deleted_keys` when it is confident that the entries re
   run: deletes resume on their own if the rules stop firing (for example because the missing entries are listed
   again), otherwise a one-off run with `ALLOW_UNSAFE_DELETES=true` is needed. The override bypasses the breaker
   only, never the two rules above.
-- **Publish failures fail the run.** If harvested data cannot be stored or published, no deletes are sent, the
-  harvest metadata is left untouched so that everything is sent again by the next run, and the run exits with an
-  error.
+- **Publish failures fail the run.** The run stops at the first batch of harvested data that cannot be stored or
+  published: no deletes are sent, the harvest metadata is left untouched so that everything is sent again by the
+  next run, and the run exits with an error. Deletes are only sent, in a message of their own, after every update
+  has been published.
 
 ### Removing a collection
 
@@ -81,8 +84,7 @@ A collection harvester never deletes its own collection, and fails on every run 
 upstream. To remove a collection deliberately:
 
 1. Remove the harvester's configuration so that it no longer runs.
-2. Delete the collection through the catalogue API, or publish a `harvested` message listing its keys in
-   `deleted_keys`.
+2. Delete the collection through the catalogue API.
 3. Delete the harvester's `harvested-metadata/` object from the metadata S3 bucket.
 
 For a harvester of a whole catalogue, a one-off run with `ALLOW_UNSAFE_DELETES=true` sends the withheld deletes.
@@ -108,7 +110,7 @@ After processing, the service sends a message to the `harvested` topic.
 - `bucket_name`: S3 bucket where files are stored (may be different from the source).
 - `updated_keys`, `deleted_keys`, `added_keys`: Refer to the updated, deleted, or added files in the output catalogue.
 
-**Note:** The service may also send "empty" catalogue change messages (with no updated, deleted, or added keys) to indicate no file changes.
+**Note:** No message is sent when there is nothing to update, add or delete. Deleted keys are sent in a message of their own, after all updates and additions.
 
 ## Usage
 

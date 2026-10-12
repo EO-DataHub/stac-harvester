@@ -37,7 +37,11 @@ from .stac_harvester_messager import STACHarvesterMessager
 
 
 class HarvesterFetchError(Exception):
-    pass
+    """A transient failure may be an outage of the source, so it counts towards aborting the harvest"""
+
+    def __init__(self, message: str, *, transient: bool = True) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 class CollectionNotFoundError(Exception):
@@ -79,6 +83,7 @@ tracer = trace.get_tracer(__name__)
 class HarvestRunState:
     is_partial: bool = False
     collection_mode: bool = False
+    collection_id: str | None = None
     owned_prefix: str | None = None
 
 
@@ -95,12 +100,26 @@ def get_file_contents(url: str) -> bytes:
         except urllib.error.HTTPError as e:
             # Must precede OSError. Client errors other than timeout/rate-limit will not recover.
             if 400 <= e.code < 500 and e.code not in (408, 429):
-                raise HarvesterFetchError(f"Failed to fetch {url}: HTTP {e.code}") from e
+                raise HarvesterFetchError(
+                    f"Failed to fetch {url}: HTTP {e.code}", transient=e.code not in (404, 410)
+                ) from e
             last_error = e
         except (OSError, http.client.IncompleteRead, http.client.BadStatusLine) as e:
             last_error = e
         logging.warning(f"Unable to access {url} (attempt {attempt + 1}/{FETCH_ATTEMPTS}): {last_error}")
     raise HarvesterFetchError(f"Failed to fetch {url} after {FETCH_ATTEMPTS} attempts: {last_error}")
+
+
+def fetch_json(url: str) -> tuple[bytes, dict[str, Any]]:
+    """Returns the raw and decoded contents of the JSON object at a given URL"""
+    body = get_file_contents(url)
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except ValueError as e:
+        raise HarvesterFetchError(f"Undecodable response from {url}: {e}") from e
+    if not isinstance(data, dict):
+        raise HarvesterFetchError(f"Response from {url} is not a JSON object")
+    return body, data
 
 
 def get_file_hash(body: bytes) -> str:
@@ -125,34 +144,63 @@ def get_metadata(bucket: str, key: str, s3_client: BaseClient) -> dict[str, Any]
     return previously_harvested
 
 
-class ListingValidatingStacApiIO(StacApiIO):
-    """StacApiIO that rejects malformed listing pages. pystac-client ends pagination silently on a
-    page with no features/collections, which would make a truncated listing look complete"""
+@dataclass
+class _ListingProgress:
+    kind: str | None = None
+    count: int = 0
+    number_matched: int | None = None
 
-    _reading_listing_page = False
+
+class ListingValidatingStacApiIO(StacApiIO):
+    """StacApiIO that rejects malformed or incomplete listings. pystac-client ends pagination silently
+    on a page with no features/collections, which would make a truncated listing look complete"""
+
+    _listing: _ListingProgress | None = None
 
     def read_json(self, source: HREF, *args: object, **kwargs: object) -> dict[str, Any]:
         page = super().read_json(source, *args, **kwargs)
-        if self._reading_listing_page and not (
-            isinstance(page, dict)
-            and (isinstance(page.get("features"), list) or isinstance(page.get("collections"), list))
-        ):
-            raise APIError(f"Malformed listing page from {source}: expected a list of features or collections")
+        listing = self._listing
+        if listing is None:
+            return page
+
+        is_first_page = listing.kind is None
+        if is_first_page and isinstance(page, dict):
+            listing.kind = next(
+                (kind for kind in ("features", "collections") if isinstance(page.get(kind), list)), None
+            )
+        entries = page.get(listing.kind) if isinstance(page, dict) and listing.kind else None
+        if not isinstance(entries, list):
+            expected = listing.kind or "features or collections"
+            raise APIError(f"Malformed listing page from {source}: expected a list of {expected}")
+
+        has_next = any(isinstance(link, dict) and link.get("rel") == "next" for link in page.get("links") or [])
+        if not entries and has_next:
+            raise APIError(f"Incomplete listing from {source}: empty page with a next link")
+
+        listing.count += len(entries)
+        number_matched = page.get("numberMatched")
+        if is_first_page and isinstance(number_matched, int) and not isinstance(number_matched, bool):
+            listing.number_matched = number_matched
+        if not has_next and listing.number_matched is not None and listing.count < listing.number_matched:
+            raise APIError(
+                f"Incomplete listing from {source}: ended after {listing.count} of {listing.number_matched} entries"
+            )
         return page
 
     def get_pages(
         self, url: str, method: str | None = None, parameters: dict[str, Any] | None = None
     ) -> Iterator[dict[str, Any]]:
         pages = super().get_pages(url, method=method, parameters=parameters)
+        listing = _ListingProgress()
         while True:
             # Only validate while pystac-client reads a page, not while the caller handles one
-            self._reading_listing_page = True
+            self._listing = listing
             try:
                 page = next(pages)
             except StopIteration:
                 return
             finally:
-                self._reading_listing_page = False
+                self._listing = None
             yield page
 
 
@@ -225,9 +273,10 @@ def prepare_catalogue_stac(source_url: str, run_state: HarvestRunState | None = 
         pages: Any = chain(catalogue, all_collections, all_items)
     except ClientTypeError:
         collection = Collection.from_file(source_url, stac_io=_create_stac_io())
+        name = collection.id
         if run_state is not None:
             run_state.collection_mode = True
-        name = collection.id
+            run_state.collection_id = name
 
         root_catalogue = next(link.target for link in collection.links if link.rel == "root")
 
@@ -236,9 +285,8 @@ def prepare_catalogue_stac(source_url: str, run_state: HarvestRunState | None = 
         pages_list: list[Any] = [client.get_root()]
         for collection in all_collections:
             self_link = next(link.target for link in collection.links if link.rel == "self")
-            if is_same_url(str(self_link), source_url):
+            if collection.id == name and is_same_url(str(self_link), source_url):
                 pages_list.append(collection)
-                collection = client.get_collection(collection.id)
                 pages = chain(pages_list, collection.get_items(recursive=True))
                 break
         else:
@@ -356,8 +404,7 @@ def parse_url_stac(entry_url: str) -> tuple[str, dict[str, Any], str]:
     global parent_keys
 
     key = ""
-    entry_data_raw = get_file_contents(entry_url)
-    entry_data = json.loads(entry_data_raw.decode("utf-8"))
+    entry_data_raw, entry_data = fetch_json(entry_url)
     file_hash = get_file_hash(entry_data_raw)
 
     url: str | None = entry_url
@@ -365,8 +412,7 @@ def parse_url_stac(entry_url: str) -> tuple[str, dict[str, Any], str]:
         if url == entry_url:
             data = entry_data
         else:
-            data_raw = get_file_contents(url)
-            data = json.loads(data_raw.decode("utf-8"))
+            _, data = fetch_json(url)
 
         entry_type = get_type(data)
         if not entry_type:
@@ -431,6 +477,25 @@ def validate_fetched_entry(item: object, data: dict[str, Any]) -> None:
         )
 
 
+def validate_entry_key(key: str, data: dict[str, Any], run_state: HarvestRunState) -> None:
+    """Raises ValueError if an item's key is not beneath a catalogue or collection or, when harvesting
+    a single collection, not beneath that collection"""
+    if data.get("type") != "Feature":
+        return
+
+    if run_state.collection_mode:
+        valid = run_state.owned_prefix is not None and key.startswith(run_state.owned_prefix + "/")
+    else:
+        valid = not key.startswith("items/")
+    if not valid:
+        raise ValueError(f"Item key {key} is not beneath {run_state.owned_prefix or 'a catalogue or collection'}")
+
+
+def get_allow_unsafe_deletes() -> bool:
+    """Reads ALLOW_UNSAFE_DELETES"""
+    return os.environ.get("ALLOW_UNSAFE_DELETES", "").strip().lower() in ("1", "true", "yes")
+
+
 def get_max_delete_fraction() -> float:
     """Reads and validates MAX_DELETE_FRACTION"""
     raw_value = os.environ.get("MAX_DELETE_FRACTION")
@@ -462,7 +527,8 @@ def is_item_key(key: str) -> bool:
 
 def split_stale_keys(stale_keys: list[str], run_state: HarvestRunState) -> tuple[list[str], list[str]]:
     """Splits stale keys into (deletable, out_of_scope). A collection harvest only owns keys beneath
-    its own collection, so the shared root catalogue and other collections are never deletable"""
+    its own collection, so that collection, the shared root catalogue and other collections are never
+    deletable"""
     if not run_state.collection_mode:
         return list(stale_keys), []
 
@@ -473,7 +539,7 @@ def split_stale_keys(stale_keys: list[str], run_state: HarvestRunState) -> tuple
     deletable: list[str] = []
     out_of_scope: list[str] = []
     for key in stale_keys:
-        if key == prefix + ".json" or key.startswith(prefix + "/"):
+        if key.startswith(prefix + "/"):
             deletable.append(key)
         else:
             out_of_scope.append(key)
@@ -485,8 +551,6 @@ def get_delete_block_reason(
 ) -> str | None:
     """Delete circuit breaker. Returns the reason the given deletes must not be sent, or None if
     they are safe to send"""
-    if os.environ.get("ALLOW_UNSAFE_DELETES", "").strip().lower() in ("1", "true", "yes"):
-        return None
     if not deleted_keys:
         return None
 
@@ -514,6 +578,7 @@ def main() -> None:
 
     args = parser.parse_args()
     max_delete_fraction = get_max_delete_fraction()
+    allow_unsafe_deletes = get_allow_unsafe_deletes()
 
     token_workspace = attach(set_baggage("workspace", args.workspace_name))
     token_source = attach(set_baggage("source_url", args.source_url))
@@ -585,12 +650,14 @@ def main() -> None:
                         # logging.info(f"Parsing URL: {url}")
                         key, data, file_hash = parse_url_stac(url)
                         validate_fetched_entry(item, data)
+                        validate_entry_key(key, data, run_state)
 
                         # The collection at the configured URL is the collection this harvester owns
                         if (
                             run_state.collection_mode
                             and run_state.owned_prefix is None
                             and data.get("type") == "Collection"
+                            and data.get("id") == run_state.collection_id
                             and is_same_url(url, args.source_url)
                         ):
                             run_state.owned_prefix = key
@@ -621,13 +688,16 @@ def main() -> None:
                         # logging.info(f"Sending {len(harvested_data)} messages: {messages}")
                         if not send_messages(stac_harvester_messager, messages):
                             publish_failed = True
+                            break
                         harvested_data = {}
                 except HarvesterFetchError as e:
                     run_state.is_partial = True
-                    consecutive_fetch_failures += 1
-                    total_fetch_failures += 1
                     item_id = get_item_id(item)
                     logging.error(f"Skipping item {item_id} due to fetch failure: {e}")
+                    if not e.transient:
+                        continue
+                    consecutive_fetch_failures += 1
+                    total_fetch_failures += 1
                     if (
                         consecutive_fetch_failures >= MAX_CONSECUTIVE_FETCH_FAILURES
                         or total_fetch_failures >= MAX_TOTAL_FETCH_FAILURES
@@ -659,10 +729,7 @@ def main() -> None:
 
         messages["harvested_data"] = harvested_data
         messages["deleted_keys"] = []
-        if not send_messages(stac_harvester_messager, messages):
-            publish_failed = True
-
-        if publish_failed:
+        if publish_failed or not send_messages(stac_harvester_messager, messages):
             # Nothing is known to have been delivered, so everything must be re-sent by the next run
             raise PublishError("Failed to publish harvested data; no deletes sent and harvest metadata left untouched")
 
@@ -675,7 +742,7 @@ def main() -> None:
                     f"{run_state.owned_prefix}: {retained_keys[:20]}"
                 )
 
-            if is_git:
+            if is_git or allow_unsafe_deletes:
                 block_reason = None
             else:
                 block_reason = get_delete_block_reason(
@@ -689,10 +756,12 @@ def main() -> None:
                 retained_keys += deleted_keys
                 deleted_keys = []
 
-            messages["harvested_data"] = harvested_data
-            messages["deleted_keys"] = deleted_keys
-            if not send_messages(stac_harvester_messager, messages):
-                raise PublishError("Failed to publish harvested data and deletes; harvest metadata left untouched")
+            if deleted_keys:
+                # Sent on their own, once every update is known to have been published
+                messages["harvested_data"] = {}
+                messages["deleted_keys"] = deleted_keys
+                if not send_messages(stac_harvester_messager, messages):
+                    raise PublishError("Failed to publish deletes; harvest metadata left untouched")
             logging.info(f"Harvested files: {latest_harvested}")
         else:
             retained_keys = stale_keys

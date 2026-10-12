@@ -4,16 +4,18 @@
 
 ### Fixed
 
-- A source outage can no longer cause deletions: any skipped, failed, mismatched or malformed
-  entry or listing page marks the run as partial, which suppresses all deletes
+- A source outage can no longer cause deletions: any skipped, failed, mismatched, misplaced or
+  malformed entry, or malformed or incomplete listing, marks the run as partial, which suppresses
+  all deletes
 - Collection harvesters only delete keys beneath their own collection; the shared root catalogue
   and other out-of-scope keys are never deleted
 - Fail the run when the configured collection is not found upstream instead of harvesting only
   the root catalogue
 - Retry fetches with backoff and a timeout, including failures while reading the response; abort
-  the harvest after repeated fetch failures
-- Fail the run, without sending deletes or updating the harvest metadata, when harvested data
-  cannot be published
+  the harvest after repeated fetch failures or undecodable responses (entries answering 404 or
+  410 do not count)
+- Stop and fail the run, without sending deletes or updating the harvest metadata, when harvested
+  data cannot be published; deletes are sent in a message of their own after all updates
 
 ### Added
 

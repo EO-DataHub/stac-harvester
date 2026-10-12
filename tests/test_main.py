@@ -58,7 +58,7 @@ def parameters() -> dict[str, Any]:
 def _previous_run_file_contents(url: str) -> bytes:
     """One catalogue and one item that is still listed upstream"""
     if url.endswith("/kept-item"):
-        return b'{"id": "kept-item", "type": "Feature", "links": []}'
+        return b'{"id": "kept-item", "type": "Feature", "links": [{"rel": "parent", "href": "https://test-url.co.uk/collection_new"}]}'
     return b'{"id": "test_catalogue", "type": "Catalog", "links": []}'
 
 
@@ -226,7 +226,8 @@ def test_main_with_previous_run_updated(
             mock_file_contents.side_effect = _previous_run_file_contents
 
             mock_messager_instance = mock_messager.return_value
-            mock_messager_instance.consume.return_value = None
+            payloads: list[dict[str, Any]] = []
+            mock_messager_instance.consume.side_effect = lambda message: payloads.append(copy.deepcopy(message))
             stac_harvester.main()
             test_msg = {
                 "source": "catalog-name",
@@ -237,8 +238,17 @@ def test_main_with_previous_run_updated(
                         "type": "Catalog",
                         "links": [],
                     },
-                    "items/kept-item.json": {"id": "kept-item", "type": "Feature", "links": []},
+                    "catalogs/test_catalogue/items/kept-item.json": {
+                        "id": "kept-item",
+                        "type": "Feature",
+                        "links": [{"rel": "parent", "href": "https://test-url.co.uk/collection_new"}],
+                    },
                 },
+                "deleted_keys": [],
+            }
+            # Deletes are sent on their own, after the updates
+            delete_msg = test_msg | {
+                "harvested_data": {},
                 "deleted_keys": ["catalogs/test_catalogue/collections/c/items/old-item.json"],
             }
             # Verify messager created correctly
@@ -250,7 +260,7 @@ def test_main_with_previous_run_updated(
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_with(test_msg)
+            assert payloads == [test_msg, delete_msg]
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
@@ -312,7 +322,8 @@ def test_main_with_previous_run_deleted(
             mock_file_contents.side_effect = _previous_run_file_contents
 
             mock_messager_instance = mock_messager.return_value
-            mock_messager_instance.consume.return_value = None
+            payloads: list[dict[str, Any]] = []
+            mock_messager_instance.consume.side_effect = lambda message: payloads.append(copy.deepcopy(message))
             stac_harvester.main()
             test_msg = {
                 "source": "catalog-name",
@@ -323,8 +334,17 @@ def test_main_with_previous_run_deleted(
                         "type": "Catalog",
                         "links": [],
                     },
-                    "items/kept-item.json": {"id": "kept-item", "type": "Feature", "links": []},
+                    "catalogs/test_catalogue/items/kept-item.json": {
+                        "id": "kept-item",
+                        "type": "Feature",
+                        "links": [{"rel": "parent", "href": "https://test-url.co.uk/collection_new"}],
+                    },
                 },
+                "deleted_keys": [],
+            }
+            # Deletes are sent on their own, after the updates
+            delete_msg = test_msg | {
+                "harvested_data": {},
                 "deleted_keys": ["catalogs/test_catalogue/collections/c/items/old-item.json"],
             }
             # Verify messager created correctly
@@ -336,7 +356,7 @@ def test_main_with_previous_run_deleted(
             )
             assert isinstance(mock_messager.call_args[1]["s3_client"], BaseClient)
             # Verify that the message is consumed by the messager
-            mock_messager_instance.consume.assert_called_with(test_msg)
+            assert payloads == [test_msg, delete_msg]
 
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
@@ -920,13 +940,14 @@ def _patch_listing(mocker: MockerFixture, listing: Listing, *, collection_mode: 
 
     def prepare(source_url: str, run_state: stac_harvester.HarvestRunState) -> tuple[str, list[mock.Mock]]:
         run_state.collection_mode = collection_mode
+        run_state.collection_id = "sentinel1_ard" if collection_mode else None
         return "catalogue_name", [_entry(url) for url, _ in listing]
 
     def parse(url: str) -> tuple[str, dict[str, Any], str]:
         outcome = outcomes[url]
         if isinstance(outcome, Exception):
             raise outcome
-        return outcome, {"id": outcome, "type": _type_of_key(outcome)}, "new-hash"
+        return outcome, {"id": outcome.split("/")[-1], "type": _type_of_key(outcome)}, "new-hash"
 
     mocker.patch("stac_harvester.__main__.prepare_catalogue_stac", side_effect=prepare)
     return mocker.patch("stac_harvester.__main__.parse_url_stac", side_effect=parse)
@@ -937,18 +958,23 @@ def _own_item_url(item_id: str) -> str:
 
 
 def _patch_collection_source(
-    mocker: MockerFixture, item_ids: list[str], *, listed_self: str = COLLECTION_URL, source_url: str = COLLECTION_URL
+    mocker: MockerFixture,
+    item_ids: list[str],
+    *,
+    listed_self: str = COLLECTION_URL,
+    listed_id: str = "sentinel1_ard",
+    source_url: str = COLLECTION_URL,
 ) -> mock.MagicMock:
     """Make the real prepare_catalogue_stac see COLLECTION_URL as a collection beneath ROOT_URL. Returns
     the mock client for the root catalogue"""
     listed_collection = _entry(listed_self)
-    listed_collection.id = "sentinel1_ard"
+    listed_collection.id = listed_id
     listed_collection.links = [mock.Mock(rel="self", target=listed_self)]
+    listed_collection.get_items.return_value = [_entry(_own_item_url(i)) for i in item_ids]
 
     client = mock.MagicMock()
     client.get_root.return_value = _entry(ROOT_URL)
     client.get_collections.return_value = [listed_collection]
-    client.get_collection.return_value.get_items.return_value = [_entry(_own_item_url(i)) for i in item_ids]
 
     def create_client(url: str) -> mock.MagicMock:
         if url == source_url:
@@ -1050,29 +1076,6 @@ def test_main_collection_total_outage_preserves_state(parameters: dict[str, Any]
     assert mock_file_contents.call_count == stac_harvester.MAX_CONSECUTIVE_FETCH_FAILURES
 
 
-def test_main_collection_clean_run_keeps_root_key(parameters: dict[str, Any], mocker: MockerFixture) -> None:
-    """A clean collection harvest only deletes beneath its own collection and keeps tracking the root"""
-    item_ids = ["item-1"]
-    _patch_collection_source(mocker, item_ids)
-    documents = _ceda_documents(item_ids)
-    mocker.patch("stac_harvester.__main__.get_file_contents", side_effect=lambda url: documents[url])
-    own_stale_key = OWN_ITEM_PREFIX + "item-gone.json"
-    previous = {
-        ROOT_KEY: "old-hash",
-        COLLECTION_KEY: "old-hash",
-        OWN_ITEM_PREFIX + "item-1.json": "old-hash",
-        own_stale_key: "old-hash",
-        FOREIGN_ITEM_KEY: "old-hash",
-    }
-
-    payloads, state = _run_main(mocker, parameters, previous=previous, source_url=COLLECTION_URL)
-
-    assert _deleted(payloads) == [own_stale_key]
-    assert set(state) == {ROOT_KEY, COLLECTION_KEY, OWN_ITEM_PREFIX + "item-1.json", FOREIGN_ITEM_KEY}
-    assert state[ROOT_KEY] == stac_harvester.get_file_hash(documents[ROOT_URL])
-    assert state[FOREIGN_ITEM_KEY] == "old-hash"
-
-
 def _assert_item_error_marks_run_partial(mocker: MockerFixture, parameters: dict[str, Any], error: Exception) -> None:
     stale_key = ITEM_PREFIX + "stale.json"
     previous = {stale_key: "old-hash", ITEM_PREFIX + "bad.json": "old-hash"}
@@ -1120,23 +1123,71 @@ def test_main_partial_run_merges_state(
     assert state == {key_a: "new-hash", key_b: "h2", key_c: "h3"}
 
 
-def test_main_aborts_after_consecutive_fetch_failures(
-    parameters: dict[str, Any], mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+def _patch_urlopen(mocker: MockerFixture, respond: Callable[[str], bytes | Exception]) -> mock.Mock:
+    def urlopen(url: str, timeout: float) -> mock.MagicMock:
+        result = respond(url)
+        if isinstance(result, Exception):
+            raise result
+        return _response(lambda: result)
+
+    return mocker.patch("stac_harvester.__main__.urlopen", side_effect=urlopen)
+
+
+@pytest.mark.parametrize("response", [403, b"", b"[]"], ids=["forbidden", "empty-body", "not-an-object"])
+def test_main_aborts_after_consecutive_failed_responses(
+    parameters: dict[str, Any], mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, response: int | bytes
 ) -> None:
-    """A source that is down must not be hammered for every listed entry"""
+    """A source that is down, in whatever way, must not be hammered for every listed entry"""
     # Override the circuit breaker so that only partial-run handling can prevent the delete
     monkeypatch.setenv("ALLOW_UNSAFE_DELETES", "true")
-    error = stac_harvester.HarvesterFetchError("fetch failed")
-    mock_parse = _patch_listing(mocker, [(_item_url(f"item-{i}"), error) for i in range(10)])
+    entries = [_entry(_item_url(f"item-{i}")) for i in range(60)]
+    mocker.patch("stac_harvester.__main__.prepare_catalogue_stac", return_value=("catalogue", entries))
+    mock_urlopen = _patch_urlopen(mocker, lambda url: _http_error(response) if isinstance(response, int) else response)
+    previous = {ITEM_PREFIX + "item-0.json": "old-hash"}
 
-    payloads, state = _run_main(mocker, parameters, previous={ITEM_PREFIX + "item-0.json": "old-hash"})
+    payloads, state = _run_main(mocker, parameters, previous=previous)
 
-    assert mock_parse.call_count == stac_harvester.MAX_CONSECUTIVE_FETCH_FAILURES == 5
+    assert mock_urlopen.call_count == stac_harvester.MAX_CONSECUTIVE_FETCH_FAILURES == 5
     # The final flush still happens, with nothing to delete
     assert payloads == [
         {"source": "catalog-name", "target": "catalogue_target", "harvested_data": {}, "deleted_keys": []}
     ]
-    assert state == {ITEM_PREFIX + "item-0.json": "old-hash"}
+    assert state == previous
+
+
+def test_main_entries_that_are_gone_do_not_abort_harvest(
+    parameters: dict[str, Any], mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Listed entries answering 404 make the run partial, but are not an outage: any number of them
+    must not stop the rest of the catalogue from being harvested"""
+    monkeypatch.setenv("ALLOW_UNSAFE_DELETES", "true")
+    collection_url = "https://example.com/collections/c"
+    names = [f"{kind}-{i}" for i in range(60) for kind in ("gone", "good")]
+    entries = [_entry(collection_url), *(_entry(_item_url(name)) for name in names)]
+    mocker.patch("stac_harvester.__main__.prepare_catalogue_stac", return_value=("catalogue", entries))
+
+    def respond(url: str) -> bytes | Exception:
+        if url == collection_url:
+            return b'{"type": "Collection", "id": "c", "links": []}'
+        if "gone" in url:
+            return _http_error(404)
+        item = {
+            "type": "Feature",
+            "id": url.rsplit("/", maxsplit=1)[-1],
+            "links": [{"rel": "parent", "href": collection_url}],
+        }
+        return json.dumps(item).encode("utf-8")
+
+    mock_urlopen = _patch_urlopen(mocker, respond)
+    previous = {"collections/c/items/stale.json": "old-hash"}
+
+    payloads, state = _run_main(mocker, parameters, previous=previous)
+
+    assert mock_urlopen.call_count == len(entries)
+    assert _deleted(payloads) == []
+    assert set(state) == {"collections/c.json", "collections/c/items/stale.json"} | {
+        f"collections/c/items/good-{i}.json" for i in range(60)
+    }
 
 
 def test_main_consecutive_failure_counter_resets_on_success(parameters: dict[str, Any], mocker: MockerFixture) -> None:
@@ -1230,32 +1281,42 @@ def test_main_collection_mode_never_deletes_out_of_scope_keys(
 def test_main_collection_mode_without_owned_prefix_deletes_nothing(
     parameters: dict[str, Any], mocker: MockerFixture
 ) -> None:
-    """If the configured collection itself was never harvested, nothing is known to be owned"""
+    """If the configured collection itself was never harvested, nothing is known to be owned and its
+    items cannot be placed"""
     previous = {ROOT_KEY: "root-hash", OWN_ITEM_PREFIX + "item-gone.json": "old-hash"}
     _patch_listing(mocker, [(_item_url("item-1"), OWN_ITEM_PREFIX + "item-1")], collection_mode=True)
 
     payloads, state = _run_main(mocker, parameters, previous=previous)
 
     assert _deleted(payloads) == []
-    assert state == previous | {OWN_ITEM_PREFIX + "item-1.json": "new-hash"}
+    assert state == previous
 
 
 def test_main_full_catalogue_mode_deletes_unscoped(parameters: dict[str, Any], mocker: MockerFixture) -> None:
-    """A clean full-catalogue run sends the same messages and stores the same state as before"""
+    """A clean full-catalogue run deletes any stale key. The deletes go out in a message of their own,
+    so that they cannot be published alongside an update that failed"""
     kept_key = ITEM_PREFIX + "kept.json"
     stale_key = ITEM_PREFIX + "stale.json"
     _patch_listing(mocker, _items(["kept"]))
 
-    payloads, state = _run_main(mocker, parameters, previous={kept_key: "new-hash", stale_key: "old-hash"})
+    payloads, state = _run_main(mocker, parameters, previous={kept_key: "old-hash", stale_key: "old-hash"})
 
-    message = {"source": "catalog-name", "target": "catalogue_target", "harvested_data": {}}
-    assert payloads == [message | {"deleted_keys": []}, message | {"deleted_keys": [stale_key]}]
+    message = {"source": "catalog-name", "target": "catalogue_target"}
+    assert payloads == [
+        message | {"harvested_data": {kept_key: {"id": "kept", "type": "Feature"}}, "deleted_keys": []},
+        message | {"harvested_data": {}, "deleted_keys": [stale_key]},
+    ]
     assert state == {kept_key: "new-hash"}
 
 
-def test_prepare_catalogue_raises_when_collection_not_found(mocker: MockerFixture) -> None:
+@pytest.mark.parametrize(
+    "listed",
+    [{"listed_self": "https://api.example.com/collections/other"}, {"listed_id": "other"}],
+    ids=["other-url", "other-id-at-same-url"],
+)
+def test_prepare_catalogue_raises_when_collection_not_found(mocker: MockerFixture, listed: dict[str, str]) -> None:
     """A collection that is missing upstream must fail the run rather than harvest only the root"""
-    _patch_collection_source(mocker, ["item-1"], listed_self="https://api.example.com/collections/other")
+    _patch_collection_source(mocker, ["item-1"], **listed)
 
     with pytest.raises(stac_harvester.CollectionNotFoundError, match="not found under root catalogue"):
         stac_harvester.prepare_catalogue_stac(COLLECTION_URL, stac_harvester.HarvestRunState())
@@ -1460,12 +1521,12 @@ SIBLING_ITEM_KEY = "catalogs/ceda-stac-catalogue/collections/sentinel1_ard_v2/it
     [
         # Full-catalogue mode owns everything
         (False, None, [ROOT_KEY, COLLECTION_KEY, OWN_ITEM_PREFIX + "a.json", FOREIGN_ITEM_KEY, SIBLING_ITEM_KEY], []),
-        # Collection mode owns its collection key and anything beneath it
+        # Collection mode owns what is beneath its collection
         (
             True,
             OWNED_PREFIX,
-            [COLLECTION_KEY, OWN_ITEM_PREFIX + "a.json"],
-            [ROOT_KEY, FOREIGN_ITEM_KEY, SIBLING_ITEM_KEY],
+            [OWN_ITEM_PREFIX + "a.json"],
+            [ROOT_KEY, COLLECTION_KEY, FOREIGN_ITEM_KEY, SIBLING_ITEM_KEY],
         ),
         # Collection mode with no known collection key owns nothing
         (True, None, [], [ROOT_KEY, COLLECTION_KEY, OWN_ITEM_PREFIX + "a.json", FOREIGN_ITEM_KEY, SIBLING_ITEM_KEY]),
@@ -1485,51 +1546,58 @@ def _keys(count: int) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("deleted_keys", "previous_keys", "latest_keys", "env", "expected"),
+    ("deleted_keys", "previous_keys", "latest_keys", "max_delete_fraction", "expected"),
     [
         # Nothing to delete
-        ([], _keys(5), _keys(5), {}, None),
-        ([], _keys(5), [], {}, None),
+        ([], _keys(5), _keys(5), 0.2, None),
+        ([], _keys(5), [], 0.2, None),
         # Containers are never deleted, however few
-        ([ROOT_KEY], [ROOT_KEY, *_keys(100)], _keys(100), {}, "would delete 1 catalogue/collection keys"),
-        ([COLLECTION_KEY, *_keys(1)], [COLLECTION_KEY, *_keys(100)], _keys(99), {}, "catalogue/collection keys"),
-        ([ROOT_KEY], [ROOT_KEY], [], {"ALLOW_UNSAFE_DELETES": "true"}, None),
+        ([ROOT_KEY], [ROOT_KEY, *_keys(100)], _keys(100), 0.2, "would delete 1 catalogue/collection keys"),
+        ([COLLECTION_KEY, *_keys(1)], [COLLECTION_KEY, *_keys(100)], _keys(99), 0.2, "catalogue/collection keys"),
         # A listing with no items at all, regardless of the count floor
-        (_keys(1), [ROOT_KEY, *_keys(1)], [ROOT_KEY], {}, "listing returned no items but 1 were previously harvested"),
-        (_keys(3), _keys(3), [], {"MAX_DELETE_FRACTION": "1"}, "listing returned no items but 3 were"),
-        (_keys(1), _keys(2), _keys(2)[1:], {}, None),
-        (_keys(1), _keys(1), [], {"ALLOW_UNSAFE_DELETES": "1"}, None),
+        (
+            _keys(1),
+            [ROOT_KEY, *_keys(1)],
+            [ROOT_KEY],
+            0.2,
+            "listing returned no items but 1 were previously harvested",
+        ),
+        (_keys(3), _keys(3), [], 1, "listing returned no items but 3 were"),
+        (_keys(1), _keys(2), _keys(2)[1:], 0.2, None),
         # Count floor and fraction
-        (_keys(10), _keys(11), _keys(11)[10:], {}, None),
-        (_keys(11), _keys(12), _keys(12)[11:], {}, "would delete 11 of 12 previously harvested keys"),
-        (_keys(11), _keys(100), _keys(100)[11:], {}, None),
-        (_keys(20), _keys(100), _keys(100)[20:], {}, None),
-        (_keys(21), _keys(100), _keys(100)[21:], {}, "would delete 21 of 100 previously harvested keys"),
-        (_keys(21), _keys(100), _keys(100)[21:], {"MAX_DELETE_FRACTION": "0.5"}, None),
-        (_keys(21), _keys(100), _keys(100)[21:], {"ALLOW_UNSAFE_DELETES": "YES"}, None),
-        (_keys(21), _keys(100), _keys(100)[21:], {"ALLOW_UNSAFE_DELETES": "false"}, "would delete 21 of 100"),
+        (_keys(10), _keys(11), _keys(11)[10:], 0.2, None),
+        (_keys(11), _keys(12), _keys(12)[11:], 0.2, "would delete 11 of 12 previously harvested keys"),
+        (_keys(11), _keys(100), _keys(100)[11:], 0.2, None),
+        (_keys(20), _keys(100), _keys(100)[20:], 0.2, None),
+        (_keys(21), _keys(100), _keys(100)[21:], 0.2, "would delete 21 of 100 previously harvested keys"),
+        (_keys(21), _keys(100), _keys(100)[21:], 0.5, None),
     ],
 )
 def test_get_delete_block_reason(
-    monkeypatch: pytest.MonkeyPatch,
     deleted_keys: list[str],
     previous_keys: list[str],
     latest_keys: list[str],
-    env: dict[str, str],
+    max_delete_fraction: float,
     expected: str | None,
 ) -> None:
-    for name, value in env.items():
-        monkeypatch.setenv(name, value)
-
-    reason = stac_harvester.get_delete_block_reason(
-        deleted_keys, previous_keys, latest_keys, stac_harvester.get_max_delete_fraction()
-    )
+    reason = stac_harvester.get_delete_block_reason(deleted_keys, previous_keys, latest_keys, max_delete_fraction)
 
     if expected is None:
         assert reason is None
     else:
         assert reason is not None
         assert expected in reason
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, False), ("", False), ("false", False), ("true", True), ("1", True), ("YES", True)],
+)
+def test_get_allow_unsafe_deletes(monkeypatch: pytest.MonkeyPatch, value: str | None, expected: bool) -> None:
+    if value is not None:
+        monkeypatch.setenv("ALLOW_UNSAFE_DELETES", value)
+
+    assert stac_harvester.get_allow_unsafe_deletes() is expected
 
 
 FETCH_URL = "https://example.com/item.json"
@@ -1602,15 +1670,17 @@ def test_get_file_contents_raises_after_max_attempts(mocker: MockerFixture) -> N
     assert [call.args[0] for call in mock_sleep.call_args_list] == [2, 4, 8]
 
 
-@pytest.mark.parametrize("code", [400, 404])
-def test_get_file_contents_does_not_retry_404(mocker: MockerFixture, code: int) -> None:
-    """Client errors will not recover, so they fail straight away"""
+@pytest.mark.parametrize(("code", "transient"), [(400, True), (403, True), (404, False), (410, False)])
+def test_get_file_contents_does_not_retry_404(mocker: MockerFixture, code: int, transient: bool) -> None:
+    """Client errors will not recover, so they fail straight away. Only "not found" is known not to
+    be an outage"""
     mock_sleep = mocker.patch("stac_harvester.__main__.time.sleep")
     mock_urlopen = mocker.patch("stac_harvester.__main__.urlopen", side_effect=_http_error(code))
 
-    with pytest.raises(stac_harvester.HarvesterFetchError, match=f"HTTP {code}"):
+    with pytest.raises(stac_harvester.HarvesterFetchError, match=f"HTTP {code}") as error:
         stac_harvester.get_file_contents(FETCH_URL)
 
+    assert error.value.transient is transient
     assert mock_urlopen.call_count == 1
     mock_sleep.assert_not_called()
 
@@ -1673,7 +1743,10 @@ def _api_item(item_id: str) -> dict[str, Any]:
         "geometry": None,
         "bbox": None,
         "properties": {"datetime": "2020-01-01T00:00:00Z"},
-        "links": [{"rel": "self", "href": f"{API_URL}/collections/c/items/{item_id}"}],
+        "links": [
+            {"rel": "self", "href": f"{API_URL}/collections/c/items/{item_id}"},
+            {"rel": "parent", "href": f"{API_URL}/collections/c"},
+        ],
         "assets": {},
     }
 
@@ -1703,17 +1776,22 @@ def test_main_malformed_later_page_sends_no_deletes(
     requests_mock.get(f"{SEARCH_URL}?page=2", json={})
     documents = {
         API_URL: json.dumps(API_ROOT).encode("utf-8"),
+        f"{API_URL}/collections/c": b'{"type": "Collection", "id": "c", "links": []}',
         f"{API_URL}/collections/c/items/kept": json.dumps(_api_item("kept")).encode("utf-8"),
     }
     mocker.patch("stac_harvester.__main__.get_file_contents", side_effect=lambda url: documents[url])
-    previous = {"catalogs/root.json": "old-hash", "items/kept.json": "old-hash", "items/omitted.json": "old-hash"}
+    previous = {
+        "catalogs/root.json": "old-hash",
+        "collections/c/items/kept.json": "old-hash",
+        "collections/c/items/omitted.json": "old-hash",
+    }
 
     payloads, state = _run_main(mocker, parameters, previous=previous, source_url=API_URL)
 
-    assert "items/kept.json" in _harvested(payloads)
+    assert "collections/c/items/kept.json" in _harvested(payloads)
     assert _deleted(payloads) == []
     assert set(state) == set(previous)
-    assert state["items/omitted.json"] == "old-hash"
+    assert state["collections/c/items/omitted.json"] == "old-hash"
 
 
 def test_main_complete_pagination_still_deletes(
@@ -1729,15 +1807,20 @@ def test_main_complete_pagination_still_deletes(
     requests_mock.get(f"{SEARCH_URL}?page=2", json={"type": "FeatureCollection", "features": [], "links": []})
     documents = {
         API_URL: json.dumps(API_ROOT).encode("utf-8"),
+        f"{API_URL}/collections/c": b'{"type": "Collection", "id": "c", "links": []}',
         f"{API_URL}/collections/c/items/kept": json.dumps(_api_item("kept")).encode("utf-8"),
     }
     mocker.patch("stac_harvester.__main__.get_file_contents", side_effect=lambda url: documents[url])
-    previous = {"catalogs/root.json": "old-hash", "items/kept.json": "old-hash", "items/omitted.json": "old-hash"}
+    previous = {
+        "catalogs/root.json": "old-hash",
+        "collections/c/items/kept.json": "old-hash",
+        "collections/c/items/omitted.json": "old-hash",
+    }
 
     payloads, state = _run_main(mocker, parameters, previous=previous, source_url=API_URL)
 
-    assert _deleted(payloads) == ["items/omitted.json"]
-    assert set(state) == {"catalogs/root.json", "items/kept.json"}
+    assert _deleted(payloads) == ["collections/c/items/omitted.json"]
+    assert set(state) == {"catalogs/root.json", "collections/c/items/kept.json"}
 
 
 @pytest.mark.parametrize("page", [{}, {"features": None}, {"collections": "oops"}, [], {"detail": "error"}])
@@ -1748,12 +1831,50 @@ def test_listing_io_rejects_malformed_first_page(requests_mock: RequestsMocker, 
         list(stac_harvester._create_stac_io().get_pages(COLLECTIONS_URL))
 
 
-@pytest.mark.parametrize("page", [{"features": []}, {"collections": [], "links": []}])
-def test_listing_io_accepts_empty_listing(requests_mock: RequestsMocker, page: dict[str, Any]) -> None:
-    """A legitimately empty listing is valid; the no-items breaker rule covers that case"""
-    requests_mock.get(COLLECTIONS_URL, json=page)
+def _mock_listing(requests_mock: RequestsMocker, pages: list[dict[str, Any]]) -> None:
+    """Serve the pages from COLLECTIONS_URL, each but the last linking to the next"""
+    for number, page in enumerate(pages, start=1):
+        if number < len(pages):
+            page = page | {"links": [{"rel": "next", "href": f"{COLLECTIONS_URL}?page={number + 1}"}]}
+        requests_mock.get(COLLECTIONS_URL if number == 1 else f"{COLLECTIONS_URL}?page={number}", json=page)
 
-    assert list(stac_harvester._create_stac_io().get_pages(COLLECTIONS_URL)) == []
+
+@pytest.mark.parametrize(
+    ("pages", "expected_pages"),
+    [
+        # A legitimately empty listing is valid; the no-items breaker rule covers that case
+        ([{"features": []}], 0),
+        ([{"collections": [], "links": []}], 0),
+        ([{"features": [{}], "numberMatched": 2}, {"features": [{}], "numberMatched": 9}, {"features": []}], 2),
+        # Entries added while listing, or a total that is capped, are not a truncated listing
+        ([{"features": [{}, {}], "numberMatched": 1}], 1),
+    ],
+)
+def test_listing_io_accepts_complete_listing(
+    requests_mock: RequestsMocker, pages: list[dict[str, Any]], expected_pages: int
+) -> None:
+    _mock_listing(requests_mock, pages)
+
+    assert len(list(stac_harvester._create_stac_io().get_pages(COLLECTIONS_URL))) == expected_pages
+
+
+@pytest.mark.parametrize(
+    ("pages", "error"),
+    [
+        ([{"features": [{}]}, {"collections": []}], "expected a list of features"),
+        ([{"features": [{}]}, {"features": []}, {"features": [{}]}], "empty page with a next link"),
+        ([{"features": [{}], "numberMatched": 3}, {"features": [{}]}], "ended after 2 of 3 entries"),
+    ],
+    ids=["wrong-kind", "empty-page-with-next-link", "fewer-than-number-matched"],
+)
+def test_listing_io_rejects_incomplete_listing(
+    requests_mock: RequestsMocker, pages: list[dict[str, Any]], error: str
+) -> None:
+    """pystac-client would end each of these listings silently, as if they were complete"""
+    _mock_listing(requests_mock, pages)
+
+    with pytest.raises(APIError, match=error):
+        list(stac_harvester._create_stac_io().get_pages(COLLECTIONS_URL))
 
 
 def test_listing_io_only_validates_listing_pages(requests_mock: RequestsMocker) -> None:
@@ -1842,15 +1963,18 @@ def test_validate_fetched_entry(spec: type, data: dict[str, Any], valid: bool) -
             stac_harvester.validate_fetched_entry(entry, data)
 
 
+PARENT_LINK = {"rel": "parent", "href": "https://example.com/collections/c"}
+
+
 @pytest.mark.parametrize(
     "fetched",
     [
-        {"type": "Bogus", "id": "a", "links": []},
-        {"type": "Feature", "id": "someone-else", "links": []},
-        {"type": "Collection", "id": "a", "links": []},
-        {"type": "Bogus", "id": "someone-else", "links": []},
+        {"type": "Bogus", "id": "a", "links": [PARENT_LINK]},
+        {"type": "Feature", "id": "someone-else", "links": [PARENT_LINK]},
+        {"type": "Collection", "id": "a", "links": [PARENT_LINK]},
+        {"type": "Feature", "id": "a", "links": []},
     ],
-    ids=["bogus-type", "id-mismatch", "type-mismatch", "both"],
+    ids=["bogus-type", "id-mismatch", "type-mismatch", "no-parent"],
 )
 def test_main_fetched_entry_not_matching_listing_marks_run_partial(
     parameters: dict[str, Any], mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, fetched: dict[str, Any]
@@ -1860,29 +1984,56 @@ def test_main_fetched_entry_not_matching_listing_marks_run_partial(
     entries = [_spec_entry(Item, name, _item_url(name)) for name in ("good", "a")]
     mocker.patch("stac_harvester.__main__.prepare_catalogue_stac", return_value=("catalogue", entries))
     documents = {
-        _item_url("good"): b'{"type": "Feature", "id": "good", "links": []}',
+        PARENT_LINK["href"]: b'{"type": "Collection", "id": "c", "links": []}',
+        _item_url("good"): json.dumps({"type": "Feature", "id": "good", "links": [PARENT_LINK]}).encode("utf-8"),
         _item_url("a"): json.dumps(fetched).encode("utf-8"),
     }
     mocker.patch("stac_harvester.__main__.get_file_contents", side_effect=lambda url: documents[url])
-    previous = {"items/good.json": "old-hash", "items/a.json": "old-hash"}
+    previous = {"collections/c/items/good.json": "old-hash", "collections/c/items/a.json": "old-hash"}
 
     payloads, state = _run_main(mocker, parameters, previous=previous)
 
-    assert list(_harvested(payloads)) == ["items/good.json"]
+    assert list(_harvested(payloads)) == ["collections/c/items/good.json"]
     assert _deleted(payloads) == []
     assert set(state) == set(previous)
-    assert state["items/a.json"] == "old-hash"
+    assert state["collections/c/items/a.json"] == "old-hash"
 
 
-def test_main_collection_url_serving_a_catalogue_does_not_widen_ownership(
+def test_main_item_served_from_another_collection_marks_run_partial(
     parameters: dict[str, Any], mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only a Collection fetched from the configured URL can define what this harvester owns, even
-    when the circuit breaker is overridden"""
+    """An item of the same id in another collection is not the listed item"""
+    monkeypatch.setenv("ALLOW_UNSAFE_DELETES", "true")
+    _patch_collection_source(mocker, ["item-1"])
+    other_url = "https://api.example.com/collections/other"
+    documents = _ceda_documents(["item-1"])
+    documents[other_url] = documents[COLLECTION_URL].replace(b"sentinel1_ard", b"other")
+    documents[_own_item_url("item-1")] = json.dumps(
+        {"type": "Feature", "id": "item-1", "links": [{"rel": "parent", "href": other_url}]}
+    ).encode("utf-8")
+    mocker.patch("stac_harvester.__main__.get_file_contents", side_effect=lambda url: documents[url])
+    previous = {OWN_ITEM_PREFIX + "item-1.json": "old-hash"}
+
+    payloads, state = _run_main(mocker, parameters, previous=previous, source_url=COLLECTION_URL)
+
+    assert _deleted(payloads) == []
+    assert state[OWN_ITEM_PREFIX + "item-1.json"] == "old-hash"
+    assert not any("/collections/other/" in key for key in state)
+
+
+@pytest.mark.parametrize("served", ["root-catalogue", "other-collection"])
+def test_main_collection_url_serving_something_else_does_not_widen_ownership(
+    parameters: dict[str, Any], mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, served: str
+) -> None:
+    """Only the configured Collection, fetched from the configured URL, can define what this harvester
+    owns, even when the circuit breaker is overridden"""
     monkeypatch.setenv("ALLOW_UNSAFE_DELETES", "true")
     _patch_collection_source(mocker, ["item-1"])
     documents = _ceda_documents(["item-1"])
-    documents[COLLECTION_URL] = documents[ROOT_URL]
+    if served == "root-catalogue":
+        documents[COLLECTION_URL] = documents[ROOT_URL]
+    else:
+        documents[COLLECTION_URL] = documents[COLLECTION_URL].replace(b'"sentinel1_ard"', b'"other"')
     mocker.patch("stac_harvester.__main__.get_file_contents", side_effect=lambda url: documents[url])
     previous = {ROOT_KEY: "old-hash", FOREIGN_ITEM_KEY: "old-hash"}
 
@@ -1918,12 +2069,8 @@ def test_main_publish_failure_on_batch_fails_run(
         mocker, parameters, previous=previous, raises=stac_harvester.PublishError, consume_results=[failure]
     )
 
-    # Both batches and the final flush were attempted, but the delete message never was
-    assert [list(payload["harvested_data"]) for payload in payloads] == [
-        [ITEM_PREFIX + "a.json"],
-        [ITEM_PREFIX + "b.json"],
-        [],
-    ]
+    # Nothing more is fetched or sent after the first failure
+    assert [list(payload["harvested_data"]) for payload in payloads] == [[ITEM_PREFIX + "a.json"]]
     assert _deleted(payloads) == []
     assert state == previous
 
@@ -2047,3 +2194,101 @@ def test_get_max_delete_fraction(monkeypatch: pytest.MonkeyPatch, value: str | N
         monkeypatch.setenv("MAX_DELETE_FRACTION", value)
 
     assert stac_harvester.get_max_delete_fraction() == expected
+
+
+@pytest.mark.parametrize(
+    ("collection_mode", "owned_prefix", "key", "valid"),
+    [
+        (False, None, "catalogs/root/collections/c/items/a", True),
+        (False, None, "collections/c/items/a", True),
+        (False, None, "items/a", False),
+        (True, OWNED_PREFIX, OWNED_PREFIX + "/items/a", True),
+        (True, OWNED_PREFIX, OWNED_PREFIX + "_v2/items/a", False),
+        (True, OWNED_PREFIX, "items/a", False),
+        (True, None, OWNED_PREFIX + "/items/a", False),
+    ],
+)
+def test_validate_entry_key(collection_mode: bool, owned_prefix: str | None, key: str, valid: bool) -> None:
+    run_state = stac_harvester.HarvestRunState(collection_mode=collection_mode, owned_prefix=owned_prefix)
+
+    # Only items have to be placed
+    stac_harvester.validate_entry_key(key, {"type": "Collection"}, run_state)
+    if valid:
+        stac_harvester.validate_entry_key(key, {"type": "Feature"}, run_state)
+    else:
+        with pytest.raises(ValueError, match="not beneath"):
+            stac_harvester.validate_entry_key(key, {"type": "Feature"}, run_state)
+
+
+def test_main_collection_harvest_end_to_end(
+    parameters: dict[str, Any], mocker: MockerFixture, requests_mock: RequestsMocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A clean collection harvest through real pystac-client objects, against CEDA-shaped responses:
+    only the stale item of the configured collection is deleted"""
+    stac_fields = {"stac_version": "1.0.0", "description": "A description"}
+    root = stac_fields | {
+        "type": "Catalog",
+        "id": "ceda-stac-catalogue",
+        "conformsTo": API_ROOT["conformsTo"],
+        "links": [
+            {"rel": "self", "href": ROOT_URL},
+            {"rel": "root", "href": ROOT_URL},
+            {"rel": "data", "href": f"{ROOT_URL}collections"},
+            {"rel": "search", "type": "application/geo+json", "href": f"{ROOT_URL}search"},
+        ],
+    }
+    collection = stac_fields | {
+        "type": "Collection",
+        "id": "sentinel1_ard",
+        "license": "other",
+        "extent": {"spatial": {"bbox": [[-180, -90, 180, 90]]}, "temporal": {"interval": [[None, None]]}},
+        "links": [
+            {"rel": "root", "href": ROOT_URL},
+            {"rel": "parent", "href": ROOT_URL},
+            {"rel": "self", "href": COLLECTION_URL},
+            {"rel": "items", "href": f"{COLLECTION_URL}/items"},
+        ],
+    }
+    items = {
+        item_id: _api_item(item_id)
+        | {
+            "collection": "sentinel1_ard",
+            "links": [
+                {"rel": "collection", "href": COLLECTION_URL},
+                {"rel": "parent", "href": COLLECTION_URL},
+                {"rel": "root", "href": ROOT_URL},
+                {"rel": "self", "href": _own_item_url(item_id)},
+            ],
+        }
+        for item_id in ("item-1", "item-2")
+    }
+    next_link = {"rel": "next", "href": f"{COLLECTION_URL}/items?page=2"}
+    requests_mock.get(ROOT_URL, json=root)
+    requests_mock.get(COLLECTION_URL, json=collection)
+    requests_mock.get(f"{ROOT_URL}collections", json={"collections": [collection], "links": [], "numberMatched": 1})
+    requests_mock.get(
+        f"{COLLECTION_URL}/items", json={"features": [items["item-1"]], "links": [next_link], "numberMatched": 2}
+    )
+    requests_mock.get(next_link["href"], json={"features": [items["item-2"]], "links": [], "numberMatched": 2})
+    documents = {ROOT_URL: root, COLLECTION_URL: collection} | {_own_item_url(i): item for i, item in items.items()}
+    mocker.patch(
+        "stac_harvester.__main__.get_file_contents", side_effect=lambda url: json.dumps(documents[url]).encode("utf-8")
+    )
+    own_stale_key = OWN_ITEM_PREFIX + "item-gone.json"
+    previous = dict.fromkeys(
+        [ROOT_KEY, COLLECTION_KEY, OWN_ITEM_PREFIX + "item-1.json", own_stale_key, FOREIGN_ITEM_KEY], "old-hash"
+    )
+
+    payloads, state = _run_main(mocker, parameters, previous=previous, source_url=COLLECTION_URL)
+
+    assert "HARVEST PARTIAL" not in caplog.text
+    assert _deleted(payloads) == [own_stale_key]
+    assert set(state) == {
+        ROOT_KEY,
+        COLLECTION_KEY,
+        OWN_ITEM_PREFIX + "item-1.json",
+        OWN_ITEM_PREFIX + "item-2.json",
+        FOREIGN_ITEM_KEY,
+    }
+    assert state[ROOT_KEY] != "old-hash"
+    assert state[FOREIGN_ITEM_KEY] == "old-hash"
