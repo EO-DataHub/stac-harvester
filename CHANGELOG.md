@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Each run sends a `harvest_run` baggage value (`HARVEST_RUN`, or the pod name) with its messages, so
+  the transformer and ingester log lines for its items can be grouped by run
+
 ## v0.1.15 (12-10-2026)
 
 ### Fixed
