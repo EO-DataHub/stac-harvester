@@ -51,6 +51,7 @@ STAC Harvesters are configured through environment variables
 - `AWS_SECRET_ACCESS_KEY`
 - `MAX_DELETE_FRACTION`: Largest fraction of the previously harvested keys that one run may delete (default `0.2`). Must be a number between 0 and 1, otherwise the run fails at startup. Only applies when more than 10 keys would be deleted
 - `ALLOW_UNSAFE_DELETES`: Set to `true` on a one-off run to bypass the delete circuit breaker
+- `HARVEST_RUN`: ID of this run (default: the host name, which in Kubernetes is the pod name). It is sent as the `harvest_run` OpenTelemetry baggage value, so it appears on the log lines of this run and of the transformer and ingester that process its messages
 
 ### Delete safety
 

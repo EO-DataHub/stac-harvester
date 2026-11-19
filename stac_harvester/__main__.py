@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import socket
 import time
 import urllib.error
 from collections.abc import Iterable, Iterator
@@ -569,6 +570,11 @@ def get_delete_block_reason(
     return None
 
 
+def get_harvest_run() -> str:
+    """Identifies this run; in Kubernetes the host name is the pod name"""
+    return os.getenv("HARVEST_RUN") or socket.gethostname()
+
+
 def main() -> None:
     """Harvest a given upstream STAC catalog, and all records beneath it. Send a pulsar message
     containing all added, updated, and deleted links since the last time the catalog was
@@ -582,6 +588,8 @@ def main() -> None:
 
     token_workspace = attach(set_baggage("workspace", args.workspace_name))
     token_source = attach(set_baggage("source_url", args.source_url))
+    # Baggage reaches the transformer and ingester logs, so their writes can be grouped by run
+    token_run = attach(set_baggage("harvest_run", get_harvest_run()))
 
     topic = os.getenv("TOPIC")
     if topic:
@@ -774,6 +782,7 @@ def main() -> None:
         new_state = latest_harvested | {key: previously_harvested[key] for key in retained_keys}
         upload_file_s3(json.dumps(new_state), args.metadata_s3_bucket, metadata_s3_key, s3_client)
 
+    detach(token_run)
     detach(token_source)
     detach(token_workspace)
 

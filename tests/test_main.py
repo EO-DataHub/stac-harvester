@@ -16,6 +16,7 @@ import pytest
 from botocore.client import BaseClient
 from eodhp_utils.messagers import Messager
 from munch import DefaultMunch
+from opentelemetry import baggage
 from pystac import Catalog, Collection, Item
 from pystac.errors import STACError, STACTypeError
 from pystac_client.errors import ClientTypeError
@@ -172,6 +173,54 @@ def test_main(parameters: dict[str, Any], mocker: MockerFixture) -> None:
         # Verify that hashed data is uploaded to S3
         s3_files = list(s3_resource.Bucket(parameters["metadata_bucket_name"]).objects.all())
         assert len(s3_files) == 1
+
+
+@pytest.mark.parametrize(("harvest_run", "expected"), [("run-1", "run-1"), (None, "pod-name")])
+def test_main_sends_harvest_run(
+    parameters: dict[str, Any],
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    harvest_run: str | None,
+    expected: str,
+) -> None:
+    """The run ID is in the baggage while messages are sent, so downstream logs can be grouped by run"""
+    if harvest_run:
+        monkeypatch.setenv("HARVEST_RUN", harvest_run)
+    mocker.patch("stac_harvester.__main__.socket.gethostname", return_value="pod-name")
+
+    with moto.mock_aws():
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket=parameters["metadata_bucket_name"])
+
+        sys.argv = [
+            None,
+            parameters["url"],
+            "workspace-name",
+            "catalog-name",
+            "catalogue_target",
+            parameters["metadata_bucket_name"],
+        ]
+        mocker.patch("stac_harvester.__main__.get_file_hash", return_value="hash")
+        mocker.patch(
+            "stac_harvester.__main__.prepare_catalogue_stac",
+            return_value=("catalogue_name", [mock.MagicMock()]),
+        )
+        mocker.patch("stac_harvester.__main__.get_pulsar_client", return_value=mock.MagicMock())
+
+        sent_with: list[object] = []
+        with (
+            mock.patch("stac_harvester.__main__.STACHarvesterMessager") as mock_messager,
+            mock.patch("stac_harvester.__main__.parse_url_stac") as mock_stac_data,
+        ):
+            mock_stac_data.return_value = ("key", {"file content": "data"}, "hash")
+            mock_messager.return_value.consume.side_effect = lambda _msg: sent_with.append(
+                baggage.get_baggage("harvest_run")
+            )
+            stac_harvester.main()
+
+    assert sent_with
+    assert set(sent_with) == {expected}
+    assert baggage.get_baggage("harvest_run") is None
 
 
 def test_main_with_previous_run_updated(
